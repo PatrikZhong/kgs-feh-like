@@ -6,15 +6,24 @@ const CAVALRY_DATA := preload("res://resources/units/CavalryData.tres")
 const ARCHER_DATA  := preload("res://resources/units/ArcherData.tres")
 const MAGE_DATA    := preload("res://resources/units/MageData.tres")
 
+enum InputState { IDLE, DRAGGING, AWAITING_ATTACK }
+
 ## All units on the map.
 var units: Array[Unit] = []
 var player_units: Array[Unit] = []
 var enemy_units: Array[Unit] = []
 
+# Input state
+var _input_state: InputState = InputState.IDLE
+
 # Drag state
 var _dragged_unit: Unit = null
 var _original_cell: Vector2i = Vector2i.ZERO
 var _reachable_cells: Array[Vector2i] = []
+
+# Attack state (after landing)
+var _attacking_unit: Unit = null
+var _attack_cells: Array[Vector2i] = []
 
 @onready var grid_mgr: GridManager = $GridManager
 @onready var highlight_lyr: HighlightLayer = $HighlightLayer
@@ -54,11 +63,18 @@ func _spawn(data: UnitData, cell: Vector2i, is_player: bool) -> Unit:
 	return unit
 
 # ---------------------------------------------------------------------------
-# Input — drag & drop
+# Input
 # ---------------------------------------------------------------------------
 
 func _unhandled_input(event: InputEvent) -> void:
 	if TurnManager.current_state != TurnManager.State.PLAYER_TURN:
+		return
+
+	if _input_state == InputState.AWAITING_ATTACK:
+		if event is InputEventMouseButton \
+				and event.button_index == MOUSE_BUTTON_LEFT \
+				and event.pressed:
+			_handle_attack_click(get_global_mouse_position())
 		return
 
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
@@ -66,9 +82,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			_begin_drag(get_global_mouse_position())
 		else:
 			_end_drag(get_global_mouse_position())
-
 	elif event is InputEventMouseMotion and _dragged_unit:
 		_dragged_unit.position = units_layer.to_local(get_global_mouse_position())
+
+# ---------------------------------------------------------------------------
+# Drag & drop
+# ---------------------------------------------------------------------------
 
 func _begin_drag(world_pos: Vector2) -> void:
 	var cell := grid_mgr.world_to_grid(world_pos)
@@ -79,8 +98,8 @@ func _begin_drag(world_pos: Vector2) -> void:
 
 	_dragged_unit = unit
 	_original_cell = unit.grid_cell
+	_input_state = InputState.DRAGGING
 
-	# Compute ally cells to block (unless unit can jump)
 	var ally_cells: Array = []
 	for u in player_units:
 		if u != unit:
@@ -92,7 +111,9 @@ func _begin_drag(world_pos: Vector2) -> void:
 		unit.data.can_jump_allies,
 		ally_cells
 	)
-	highlight_lyr.show_reachable(_reachable_cells)
+
+	var atk_cells := _get_attack_range(unit.grid_cell, unit.attack_range)
+	highlight_lyr.show_move_and_attack(_reachable_cells, atk_cells)
 	unit.start_drag()
 
 func _end_drag(world_pos: Vector2) -> void:
@@ -100,7 +121,6 @@ func _end_drag(world_pos: Vector2) -> void:
 		return
 
 	var target_cell := grid_mgr.world_to_grid(world_pos)
-	highlight_lyr.clear()
 
 	var is_valid := (
 		target_cell in _reachable_cells
@@ -113,8 +133,9 @@ func _end_drag(world_pos: Vector2) -> void:
 	if is_valid:
 		_commit_move(_dragged_unit, target_cell)
 	else:
-		# Snap back to original position
+		highlight_lyr.clear()
 		_dragged_unit.position = grid_mgr.grid_to_world(_original_cell)
+		_input_state = InputState.IDLE
 
 	_dragged_unit = null
 	_reachable_cells = []
@@ -123,27 +144,44 @@ func _commit_move(unit: Unit, cell: Vector2i) -> void:
 	grid_mgr.set_cell_solid(_original_cell, false)
 	grid_mgr.set_cell_solid(cell, true)
 
-	var dest := grid_mgr.grid_to_world(cell)
 	unit.grid_cell = cell
-
 	var tween := create_tween()
-	tween.tween_property(unit, "position", dest, 0.10)
+	tween.tween_property(unit, "position", grid_mgr.grid_to_world(cell), 0.10)
 	unit.set_moved()
 
-	# Check for attackable enemies after move, then end the player's turn
-	_check_attack(unit)
+	# Show attack range from new position and wait for player to choose a target
+	_attack_cells = _get_attack_range(cell, unit.attack_range)
+	_attacking_unit = unit
+	_input_state = InputState.AWAITING_ATTACK
+	highlight_lyr.show_attack_only(_attack_cells)
+
+# ---------------------------------------------------------------------------
+# Attack selection
+# ---------------------------------------------------------------------------
+
+func _handle_attack_click(world_pos: Vector2) -> void:
+	var cell := grid_mgr.world_to_grid(world_pos)
+	highlight_lyr.clear()
+
+	if cell in _attack_cells:
+		var target := get_unit_at(cell)
+		if target and not target.is_player_unit:
+			perform_combat(_attacking_unit, target)
+
+	_attacking_unit = null
+	_attack_cells = []
+	_input_state = InputState.IDLE
 	TurnManager.end_player_turn()
 
-func _check_attack(unit: Unit) -> void:
-	if unit.has_attacked:
-		return
-	for enemy in enemy_units:
-		if not is_instance_valid(enemy):
-			continue
-		var dist: int = abs(unit.grid_cell.x - enemy.grid_cell.x) + abs(unit.grid_cell.y - enemy.grid_cell.y)
-		if dist <= unit.data.attack_range:
-			perform_combat(unit, enemy)
-			break
+func _get_attack_range(from: Vector2i, atk_range: int) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	for y in range(grid_mgr.GRID_HEIGHT):
+		for x in range(grid_mgr.GRID_WIDTH):
+			var cell := Vector2i(x, y)
+			var dist := abs(cell.x - from.x) + abs(cell.y - from.y)
+			if dist >= 1 and dist <= atk_range:
+				cells.append(cell)
+	return cells
 
 # ---------------------------------------------------------------------------
 # Combat (public so EnemyAI can call it)

@@ -10,6 +10,7 @@ var has_moved: bool = false
 var has_attacked: bool = false
 var grid_cell: Vector2i = Vector2i.ZERO
 var is_player_unit: bool = true
+var attack_range: int = 1
 
 var _is_dragging: bool = false
 
@@ -23,6 +24,7 @@ const CLASS_LABELS  := ["K", "C", "A", "M"]
 func _ready() -> void:
 	if data:
 		current_hp = data.max_hp
+		attack_range = data.attack_range
 	queue_redraw()
 
 # ---------------------------------------------------------------------------
