@@ -57,10 +57,13 @@ func _find_nearest(enemy, player_units: Array):
 func _move_toward(enemy, target, map) -> void:
 	var grid_mgr = map.grid_mgr
 
-	# Temporarily unblock the enemy's own cell for pathfinding
+	# Temporarily unblock both the enemy's cell and the target's cell so
+	# AStarGrid2D can find a path (it refuses to path to a solid destination)
 	grid_mgr.set_cell_solid(enemy.grid_cell, false)
+	grid_mgr.set_cell_solid(target.grid_cell, false)
 	var path: Array = grid_mgr.get_astar_path(enemy.grid_cell, target.grid_cell)
 	grid_mgr.set_cell_solid(enemy.grid_cell, true)
+	grid_mgr.set_cell_solid(target.grid_cell, true)
 
 	if path.is_empty():
 		return
