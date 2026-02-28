@@ -130,8 +130,9 @@ func _commit_move(unit: Unit, cell: Vector2i) -> void:
 	tween.tween_property(unit, "position", dest, 0.10)
 	unit.set_moved()
 
-	# Check for attackable enemies after move
+	# Check for attackable enemies after move, then end the player's turn
 	_check_attack(unit)
+	TurnManager.end_player_turn()
 
 func _check_attack(unit: Unit) -> void:
 	if unit.has_attacked:
