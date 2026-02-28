@@ -5,23 +5,22 @@ extends Node
 
 const ACTION_DELAY := 0.35  # seconds before the enemy acts so the player can follow
 
-## Cycles through enemies one per player turn.
-var _next_idx: int = 0
-
 func execute_turn() -> void:
 	var map = TurnManager.battle_map
 	if not map or map.enemy_units.is_empty():
 		TurnManager.end_enemy_turn()
 		return
 
-	var enemies: Array = map.enemy_units
+	# Find the first enemy that hasn't moved this round
+	var enemy = null
+	for e in map.enemy_units:
+		if is_instance_valid(e) and not e.has_moved:
+			enemy = e
+			break
 
-	# Clamp index in case enemies have died since last turn
-	if _next_idx >= enemies.size():
-		_next_idx = 0
-
-	var enemy = enemies[_next_idx]
-	_next_idx = (_next_idx + 1) % enemies.size()
+	if not enemy:
+		TurnManager.end_enemy_turn()
+		return
 
 	await get_tree().create_timer(ACTION_DELAY).timeout
 

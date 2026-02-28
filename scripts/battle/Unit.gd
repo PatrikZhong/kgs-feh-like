@@ -69,7 +69,7 @@ func play_hit_flash() -> void:
 	tween.tween_property(self, "modulate", Color.WHITE, 0.075)
 
 func is_spent() -> bool:
-	return has_moved and has_attacked
+	return has_moved
 
 # ---------------------------------------------------------------------------
 # Drawing
