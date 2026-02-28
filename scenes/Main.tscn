@@ -1,0 +1,13 @@
+[gd_scene format=3]
+
+; Placeholder main scene. Change run/main_scene in project.godot
+; to Overworld.tscn once you are ready to play the full game.
+
+[node name="Main" type="Node2D"]
+
+[node name="Label" type="Label" parent="."]
+offset_left = 40.0
+offset_top = 40.0
+offset_right = 600.0
+offset_bottom = 80.0
+text = "kgs-feh-like — placeholder. Set main scene to Overworld.tscn or BattleMap.tscn."

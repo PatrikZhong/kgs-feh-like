@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/UnitData.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+unit_name = "Cavalry"
+class_type = 1
+max_hp = 36
+attack = 14
+defense = 8
+move_range = 5
+attack_range = 1
+can_jump_allies = true
