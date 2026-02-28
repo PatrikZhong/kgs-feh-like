@@ -59,7 +59,7 @@ func _move_toward(enemy, target, map) -> void:
 
 	# Temporarily unblock the enemy's own cell for pathfinding
 	grid_mgr.set_cell_solid(enemy.grid_cell, false)
-	var path: Array = grid_mgr.get_path_to(enemy.grid_cell, target.grid_cell)
+	var path: Array = grid_mgr.get_astar_path(enemy.grid_cell, target.grid_cell)
 	grid_mgr.set_cell_solid(enemy.grid_cell, true)
 
 	if path.is_empty():

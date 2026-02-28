@@ -139,7 +139,7 @@ func _check_attack(unit: Unit) -> void:
 	for enemy in enemy_units:
 		if not is_instance_valid(enemy):
 			continue
-		var dist := abs(unit.grid_cell.x - enemy.grid_cell.x) + abs(unit.grid_cell.y - enemy.grid_cell.y)
+		var dist: int = abs(unit.grid_cell.x - enemy.grid_cell.x) + abs(unit.grid_cell.y - enemy.grid_cell.y)
 		if dist <= unit.data.attack_range:
 			perform_combat(unit, enemy)
 			break

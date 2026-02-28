@@ -109,7 +109,7 @@ func get_reachable_cells(
 func _get_neighbors(cell: Vector2i) -> Array[Vector2i]:
 	var result: Array[Vector2i] = []
 	for d in [Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)]:
-		var n := cell + d
+		var n: Vector2i = cell + d
 		if is_in_bounds(n):
 			result.append(n)
 	return result
@@ -118,7 +118,7 @@ func _get_neighbors(cell: Vector2i) -> Array[Vector2i]:
 # Pathfinding (A*)
 # ---------------------------------------------------------------------------
 
-func get_path_to(from: Vector2i, to: Vector2i) -> Array[Vector2i]:
+func get_astar_path(from: Vector2i, to: Vector2i) -> Array[Vector2i]:
 	if not is_in_bounds(from) or not is_in_bounds(to):
 		return []
 	return _astar.get_id_path(from, to)
