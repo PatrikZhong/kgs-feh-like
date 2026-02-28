@@ -65,9 +65,9 @@ func _move_toward(enemy, target, map) -> void:
 	if path.is_empty():
 		return
 
-	# Walk as many steps as allowed; stop before stepping onto another unit
+	# Move exactly one tile toward the target
 	var best_cell: Vector2i = enemy.grid_cell
-	var steps: int = mini(enemy.data.move_range, path.size() - 1)
+	var steps: int = mini(1, path.size() - 1)
 	for i in range(1, steps + 1):
 		var candidate: Vector2i = path[i]
 		if map.get_unit_at(candidate) != null:
