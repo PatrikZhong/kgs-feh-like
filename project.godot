@@ -22,3 +22,11 @@ TurnManager="*res://scripts/battle/TurnManager.gd"
 EnemyAI="*res://scripts/battle/EnemyAI.gd"
 CombatResolver="*res://scripts/battle/CombatResolver.gd"
 SaveData="*res://scripts/data/SaveData.gd"
+
+[display]
+
+window/size/viewport_height=820
+
+[rendering]
+
+environment/defaults/default_clear_color=Color(0.1, 0.09, 0.07, 1)

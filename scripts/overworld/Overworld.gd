@@ -47,7 +47,7 @@ func _spawn_nodes() -> void:
 		nodes_container.add_child(instance)
 
 func _on_node_clicked(id: int, scene_path: String) -> void:
-	SaveData.last_completed_battle_id = id
+	SaveData.current_battle_id = id
 	get_tree().change_scene_to_file(scene_path)
 
 func _get_node_pos(id: int) -> Vector2:

@@ -1,7 +1,14 @@
 {
   "permissions": {
     "allow": [
-      "Bash(\"D:/godot-engine/Godot_v4.5-stable_win64_console.exe\":*)"
+      "Bash(\"D:/godot-engine/Godot_v4.5-stable_win64_console.exe\":*)",
+      "Bash(done)",
+      "Bash(ls:*)",
+      "Bash(py:*)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "Bash(where py:*)",
+      "Bash(powershell.exe:*)"
     ]
   }
 }

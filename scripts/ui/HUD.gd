@@ -42,7 +42,7 @@ func _on_end_turn_pressed() -> void:
 func _on_battle_won() -> void:
 	result_panel.visible = true
 	result_label.text = "Victory!"
-	SaveData.unlock_after_battle(TurnManager.battle_map.get_instance_id())
+	SaveData.unlock_after_battle(SaveData.current_battle_id)
 
 func _on_battle_lost() -> void:
 	result_panel.visible = true

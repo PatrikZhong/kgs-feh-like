@@ -4,13 +4,14 @@ extends Node
 var unlocked_node_ids: Array[int] = [0]
 ## IDs of overworld edges that are now open.
 var unlocked_edge_indices: Array[int] = []
-## ID of the last battle the player completed.
-var last_completed_battle_id: int = -1
+## ID of the battle node currently being played.
+var current_battle_id: int = 0
 
-func unlock_after_battle(battle_id: int) -> void:
-	last_completed_battle_id = battle_id
-	if battle_id not in unlocked_node_ids:
-		unlocked_node_ids.append(battle_id)
+## Called on victory: unlocks the next overworld node.
+func unlock_after_battle(completed_id: int) -> void:
+	var next_id := completed_id + 1
+	if next_id not in unlocked_node_ids:
+		unlocked_node_ids.append(next_id)
 
 func is_node_unlocked(id: int) -> bool:
 	return id in unlocked_node_ids

@@ -26,6 +26,11 @@ func execute_turn() -> void:
 
 	if is_instance_valid(enemy):
 		_act(enemy, map)
+		# Always mark the enemy as spent after its turn, even if it couldn't
+		# move (e.g. adjacent to a player unit — target cell is occupied so
+		# _move_toward returns early without calling set_moved).
+		if is_instance_valid(enemy) and not enemy.has_moved:
+			enemy.set_moved()
 
 	TurnManager.end_enemy_turn()
 
@@ -91,6 +96,7 @@ func _move_toward(enemy, target, map) -> void:
 	enemy.snap_to_cell(best_cell, grid_mgr)
 	grid_mgr.set_cell_solid(best_cell, true)
 	enemy.set_moved()
+	print("[Enemy %s] moved to %s" % [enemy.data.class_label(), str(best_cell)])
 
 func _manhattan(a: Vector2i, b: Vector2i) -> int:
 	return abs(a.x - b.x) + abs(a.y - b.y)

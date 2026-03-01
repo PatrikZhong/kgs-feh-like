@@ -3,7 +3,7 @@ extends Node2D
 
 enum TileType { NORMAL, HIGH_GROUND, DANGEROUS, BLOCKED }
 
-const TILE_SIZE := Vector2i(64, 64)
+const TILE_SIZE := Vector2i(40, 40)
 const GRID_WIDTH := 8
 const GRID_HEIGHT := 8
 
@@ -14,9 +14,32 @@ var _solid_cells: Dictionary = {}
 
 var _astar: AStarGrid2D
 
+## GRASS+.png is sliced into 16×16 tiles; each battle node uses the next tile.
+const GRASS_SHEET_PATH := "res://assets/sprites/GRASS+.png"
+const GRASS_TILE_PX    := 16
+
+var _bg_tile: Texture2D = null
+
 func _ready() -> void:
+	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_bg_tile = _slice_tile(SaveData.current_battle_id)
 	_setup_astar()
 	queue_redraw()
+
+## Returns an AtlasTexture for tile at `index` in GRASS+.png
+## (left-to-right, top-to-bottom order).
+func _slice_tile(index: int) -> Texture2D:
+	var sheet: Texture2D = load(GRASS_SHEET_PATH)
+	if not sheet:
+		return null
+	var cols: int = sheet.get_width() / GRASS_TILE_PX
+	var atlas := AtlasTexture.new()
+	atlas.atlas  = sheet
+	atlas.region = Rect2(
+		(index % cols) * GRASS_TILE_PX,
+		(index / cols) * GRASS_TILE_PX,
+		GRASS_TILE_PX, GRASS_TILE_PX)
+	return atlas
 
 func _setup_astar() -> void:
 	_astar = AStarGrid2D.new()
@@ -133,13 +156,14 @@ func _draw() -> void:
 			var cell := Vector2i(x, y)
 			var rect := Rect2(Vector2(cell * TILE_SIZE), Vector2(TILE_SIZE))
 
-			var fill_color: Color
-			match get_tile_type(cell):
-				TileType.NORMAL:     fill_color = Color(0.28, 0.44, 0.28)
-				TileType.HIGH_GROUND: fill_color = Color(0.50, 0.44, 0.20)
-				TileType.DANGEROUS:  fill_color = Color(0.50, 0.20, 0.20)
-				TileType.BLOCKED:    fill_color = Color(0.18, 0.18, 0.18)
-				_:                   fill_color = Color(0.28, 0.44, 0.28)
+			# Draw base tile sprite (fallback to solid green if texture not loaded).
+			if _bg_tile:
+				draw_texture_rect(_bg_tile, rect, false)
+			else:
+				draw_rect(rect, Color(0.28, 0.44, 0.28), true)
 
-			draw_rect(rect, fill_color, true)
-			draw_rect(rect, Color(0.12, 0.22, 0.12), false, 1.5)
+			# Overlay a semi-transparent tint for non-normal tile types.
+			match get_tile_type(cell):
+				TileType.HIGH_GROUND: draw_rect(rect, Color(0.55, 0.45, 0.10, 0.50), true)
+				TileType.DANGEROUS:   draw_rect(rect, Color(0.60, 0.15, 0.15, 0.50), true)
+				TileType.BLOCKED:     draw_rect(rect, Color(0.10, 0.10, 0.10, 0.70), true)

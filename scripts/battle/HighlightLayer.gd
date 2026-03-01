@@ -1,7 +1,7 @@
 class_name HighlightLayer
 extends Node2D
 
-const CELL_SIZE    := Vector2(64, 64)
+const CELL_SIZE    := Vector2(40, 40)
 const MOVE_FILL    := Color(0.20, 0.60, 1.00, 0.35)
 const MOVE_BORDER  := Color(0.20, 0.60, 1.00, 0.85)
 const ATTACK_FILL  := Color(1.00, 0.38, 0.08, 0.38)
