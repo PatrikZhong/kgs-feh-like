@@ -66,3 +66,14 @@ horizontal_alignment = 1
 [node name="ContinueButton" type="Button" parent="HUD/ResultPanel/VBox"]
 layout_mode = 2
 text = "Continue"
+
+[node name="ThreatToggleButton" type="Button" parent="HUD"]
+anchor_left = 0.0
+anchor_top = 1.0
+anchor_right = 0.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = -48.0
+offset_right = 170.0
+offset_bottom = -8.0
+text = "Danger Zone: ON"

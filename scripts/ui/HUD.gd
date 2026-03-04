@@ -1,10 +1,15 @@
 extends CanvasLayer
 
-@onready var turn_label: Label      = $Panel/VBox/TurnLabel
-@onready var end_turn_btn: Button   = $Panel/VBox/EndTurnButton
-@onready var result_panel: Panel    = $ResultPanel
-@onready var result_label: Label    = $ResultPanel/VBox/ResultLabel
-@onready var continue_btn: Button   = $ResultPanel/VBox/ContinueButton
+signal threat_toggled(on: bool)
+
+@onready var turn_label: Label         = $Panel/VBox/TurnLabel
+@onready var end_turn_btn: Button      = $Panel/VBox/EndTurnButton
+@onready var result_panel: Panel       = $ResultPanel
+@onready var result_label: Label       = $ResultPanel/VBox/ResultLabel
+@onready var continue_btn: Button      = $ResultPanel/VBox/ContinueButton
+@onready var threat_toggle_btn: Button = $ThreatToggleButton
+
+var _threat_on: bool = true
 
 func _ready() -> void:
 	TurnManager.turn_changed.connect(_on_turn_changed)
@@ -13,6 +18,7 @@ func _ready() -> void:
 	TurnManager.new_round.connect(_on_new_round)
 	end_turn_btn.pressed.connect(_on_end_turn_pressed)
 	continue_btn.pressed.connect(_on_continue_pressed)
+	threat_toggle_btn.pressed.connect(_on_threat_toggle_pressed)
 	result_panel.visible = false
 	_refresh_turn_ui(TurnManager.current_state)
 
@@ -50,3 +56,8 @@ func _on_battle_lost() -> void:
 
 func _on_continue_pressed() -> void:
 	get_tree().change_scene_to_file("res://scenes/overworld/Overworld.tscn")
+
+func _on_threat_toggle_pressed() -> void:
+	_threat_on = not _threat_on
+	threat_toggle_btn.text = "Danger Zone: ON" if _threat_on else "Danger Zone: OFF"
+	threat_toggled.emit(_threat_on)

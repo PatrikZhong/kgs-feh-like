@@ -2,10 +2,20 @@
 
 ## Drag-and-Drop Input Flow
 
+The drag gesture uses a **ghost afterimage** pattern: the real unit stays
+at its cell (dimmed), a translucent ghost follows the cursor, and a yellow
+breadcrumb arrow shows the proposed path. A second orange arrow appears when
+hovering over an enemy to show the attack vector. On release, ghost and
+arrows are freed and the real unit tweens to the destination.
+
 ```
 BattleMap._unhandled_input(event)
 │
 │  Guard: TurnManager.current_state == PLAYER_TURN
+│
+├── InputEventMouseMotion  (while _dragged_unit == null)
+│    └── hover enemy unit → _inspect_enemy(hovered)
+│         or leave enemy  → _clear_inspection()
 │
 ├── InputEventMouseButton LEFT PRESSED
 │    └── _begin_drag(world_pos)
@@ -20,38 +30,121 @@ BattleMap._unhandled_input(event)
 │             │       can_jump_allies, ally_cells)
 │             ├── _get_extended_attack_cells(              → _extended_attack_cells [orange]
 │             │       _reachable_cells, unit.attack_range)
+│             ├── enemies inside move range added to _extended_attack_cells
 │             │
 │             ├── highlight_lyr.show_move_and_attack(blue, orange)
-│             └── unit.start_drag()   ← raises z_index, semi-transparent
+│             ├── unit.start_drag()   ← dims real unit (modulate.a=0.4), stays in place
+│             │
+│             ├── spawn _ghost (Node2D + AnimatedSprite2D clone, 65% opacity, "walk")
+│             │       added to UnitsLayer, z_index=20
+│             │       initial position = grid_to_world(_original_cell)
+│             │
+│             ├── spawn _drag_arrow (Line2D, yellow) + _drag_arrowhead (Polygon2D)
+│             │       added to BattleMap root, z_index=1
+│             │       color: Color(1.0, 0.95, 0.3, 0.9)  ← yellow
+│             │
+│             └── spawn _attack_arrow (Line2D, orange) + _attack_arrowhead (Polygon2D)
+│                     added to BattleMap root, z_index=1
+│                     color: Color(1.0, 0.35, 0.1, 0.9)  ← orange-red
 │
 ├── InputEventMouseMotion  (while _dragged_unit != null)
-│    └── _dragged_unit.position = cursor world pos
-│         (unit node moves freely under the cursor)
+│    ├── if hovered in _reachable_cells (blue tile):
+│    │    ├── _last_hovered_move_cell = hovered
+│    │    └── update _arrow_path (breadcrumb; trim loop if cell revisited)
+│    │
+│    ├── if hovered in _extended_attack_cells (orange tile):
+│    │    └── _hovered_attack_target = enemy unit at cell (or null)
+│    │
+│    ├── ghost position:
+│    │    ├── _hovered_attack_target set → snap ghost to _last_hovered_move_cell
+│    │    └── otherwise              → follow cursor freely
+│    │
+│    └── _update_drag_arrow()
+│             ├── _drag_arrow.points = path of all cells in _arrow_path
+│             ├── _drag_arrowhead at last path cell, pointing along last segment
+│             ├── if _hovered_attack_target:
+│             │    _attack_arrow points: _last_hovered_move_cell → enemy cell
+│             │    _attack_arrowhead at enemy cell
+│             └── else: _attack_arrow/head cleared
 │
 └── InputEventMouseButton LEFT RELEASED
      └── _end_drag(world_pos)
                │
-               ├── grid_mgr.world_to_grid(world_pos)       → drop_cell
-               ├── unit.end_drag()
+               ├── queue_free: _ghost, _drag_arrow, _drag_arrowhead,
+               │              _attack_arrow, _attack_arrowhead  → all null
+               ├── drop_cell = grid_mgr.world_to_grid(world_pos)
+               ├── unit.end_drag()       ← restores modulate.a = 1.0
                ├── highlight_lyr.clear()
                │
-               ├── [A] drop_cell in _reachable_cells AND cell_free
+               ├── [A] drop_cell in _reachable_cells AND cell_free AND drop_cell != origin
                │         └── _commit_move(unit, drop_cell)
                │             TurnManager.end_player_turn()
                │
                ├── [B] drop_cell in _extended_attack_cells
                │    ├── get_unit_at(drop_cell)             → target
                │    ├── target exists AND is enemy?
-               │    │    ├── _find_best_attacker_cell(     → best_cell
-               │    │    │       _original_cell, drop_cell,
-               │    │    │       _reachable_cells, attack_range)
+               │    │    ├── _pick_attacker_cell(drop_cell, unit) → best_cell
                │    │    ├── _commit_move(unit, best_cell)
                │    │    ├── perform_combat(unit, target)
                │    │    └── TurnManager.end_player_turn()
-               │    └── no enemy → cancel (snap back)
+               │    └── no enemy on orange cell → cancel (unit stays at origin)
                │
-               └── [C] anywhere else
-                         └── unit.position = grid_mgr.grid_to_world(_original_cell)
+               └── [C] anywhere else → cancel (unit stays at origin, no-op)
+```
+
+## Enemy Inspection on Hover
+
+When the player hovers the cursor over an enemy unit **without dragging**,
+BattleMap enters "inspection" mode for that enemy:
+
+```
+BattleMap._inspect_enemy(enemy)
+  ├── temporarily unblock enemy.grid_cell
+  ├── get_reachable_cells(enemy.cell, enemy.move_range, false, player_cells)
+  ├── restore enemy.grid_cell as solid
+  ├── _get_extended_attack_cells(move_cells, enemy.attack_range)
+  └── highlight_lyr.show_move_and_attack(move_cells, attack_cells)
+        ← shows that enemy's individual threat in blue + orange
+```
+
+Moving the cursor off the enemy calls `_clear_inspection()` which sets
+`_inspected_enemy = null` and calls `highlight_lyr.clear()`.
+
+Inspection is cancelled at the start of `_begin_drag()` to avoid stale
+highlights during a drag.
+
+## Threat Range (Danger Zone)
+
+An always-visible red overlay shows all cells **any** enemy can reach or
+attack this round. The player can toggle it with the "Danger Zone" button in
+the HUD.
+
+```
+BattleMap._refresh_enemy_threat()
+  │
+  │  (temporarily unblock all enemy cells so their BFS includes their own tile)
+  ├── for each enemy:
+  │    reachable  = get_reachable_cells(enemy.cell, move_range, false, player_cells)
+  │    attack_ext = _get_extended_attack_cells(reachable, attack_range)
+  │    union reachable ∪ attack_ext → seen dict
+  │  (restore all enemy cells as solid)
+  │
+  └── highlight_lyr.set_threat(seen)   ← red overlay
+```
+
+`_refresh_enemy_threat()` is called:
+- In `BattleMap._ready()` (initial state)
+- Whenever `TurnManager` emits `turn_changed` with `PLAYER_TURN`
+- Whenever a unit dies (`_on_unit_died`) for enemies
+
+HUD "Danger Zone" button emits `threat_toggled(on: bool)`:
+
+```
+HUD.threat_toggle_btn pressed
+  └── emit threat_toggled(on)
+        └── BattleMap._on_threat_toggled(on)
+              ├── on=true  → _refresh_enemy_threat()
+              └── on=false → highlight_lyr.set_threat([])
 ```
 
 ## Movement Commit
@@ -63,7 +156,7 @@ _commit_move(unit, cell)
   ├── grid_mgr.set_cell_solid(cell, true)              ← claim new cell
   ├── unit.grid_cell = cell
   ├── Tween: unit.position → grid_to_world(cell)  (0.10 s)
-  └── unit.set_moved()   ← has_moved = true, triggers grey-out redraw
+  └── unit.set_moved()   ← has_moved = true, sprite darkened (SPENT_DARKEN=0.45)
 ```
 
 ## Attack Range Computation
@@ -80,35 +173,45 @@ For every move_cell in reachable:
       if dist < 1 or dist > atk_range: skip
       candidate = move_cell + (dx, dy)
       if in_bounds AND candidate NOT in reachable:
-        add to result set
+        add to result set (deduped via dict)
 
-Returns: all cells reachable via attack from any move cell,
+Returns: all cells attackable from any move cell,
          excluding move cells themselves (no blue/orange overlap).
 ```
 
-Example (atk_range=1, single move_cell at origin):
-```
-  O O O
-  O X O      X = move cell (blue)
-  O O O      O = attack cells (orange)
-```
-
-### Best attacker cell (minimum-movement attack)
+### Best attacker cell
 
 ```
 _find_best_attacker_cell(from, target, reachable, atk_range) → Vector2i
 
-For every cell in reachable:
-  to_target = manhattan(cell, target)
-  if to_target <= atk_range:               ← can reach target from here
-    from_start = manhattan(cell, from)
-    if from_start < best_dist:             ← closer to unit's start?
-      best_cell = cell
+Pass 1 — prefer cells at EXACTLY atk_range from target:
+  for cell in reachable:
+    if manhattan(cell, target) == atk_range:
+      pick closest to `from`
 
-Returns: reachable cell closest to where the unit started that
-         still allows attacking the target.
-         (Minimises unnecessary movement, feels natural.)
+Pass 2 — fallback, accept any cell within atk_range:
+  for cell in reachable:
+    if 1 <= manhattan(cell, target) <= atk_range:
+      pick closest to `from`
+
+Returns best_cell (defaults to `from` if no valid cell found).
 ```
+
+`_pick_attacker_cell` first tries `_last_hovered_move_cell`:
+- The check is **exact**: `to_target == unit.attack_range` (not ≤).
+  For range-2 units the hover cell must be exactly 2 tiles from the target.
+  Range-1 units (melee) must be exactly adjacent. If the hover cell fails
+  this check, falls back to `_find_best_attacker_cell`.
+
+### Arrow path (breadcrumb)
+
+`_arrow_path` records the sequence of blue tiles the cursor has visited:
+
+- Start: `[_original_cell]`
+- Each time cursor enters a new blue tile: append to path
+- Each time cursor re-enters an already-visited blue tile at index `idx`:
+  trim `_arrow_path` to `slice(0, idx+1)` (removes the loop)
+- Result: `_drag_arrow.points` traces this exact path, not a straight line
 
 ## Combat Resolution
 
@@ -118,44 +221,49 @@ BattleMap.perform_combat(attacker, defender)
   ├── guard: attacker.has_attacked == false
   └── CombatResolver.resolve(attacker, defender)
                │
+               ├── attacker.play_hit_flash()   ← attacker flashes (attack animation)
                ├── dmg = max(1, attacker.data.attack - defender.data.defense)
                ├── defender.take_damage(dmg)
                │         └── defender.current_hp -= dmg
                │             if hp ≤ 0 → emit "died" signal
-               ├── attacker.play_hit_flash()   ← red→white tween 0.075s×2
                │
-               ├── is defender still alive?
-               │    counter_dist = manhattan(defender.grid_cell, attacker.grid_cell)
-               │    if counter_dist <= defender.data.attack_range:
-               │         counter = max(1, defender.data.attack - attacker.data.defense)
+               ├── defender still alive?
+               │    dist = manhattan(defender.grid_cell, attacker.grid_cell)
+               │    if dist <= defender.data.attack_range:
+               │         defender.play_hit_flash()   ← defender flashes (counter animation)
+               │         counter = max(1, defender.attack - attacker.defense)
                │         attacker.take_damage(counter)
-               │         defender.play_hit_flash()
                │
                └── [back in perform_combat]
                    attacker.set_attacked()   ← has_attacked = true
 
-Unit death (signal handler in BattleMap):
-  _on_unit_died(unit)
-    ├── units.erase(unit)
-    ├── player_units.erase(unit)  OR  enemy_units.erase(unit)
-    ├── grid_mgr.set_cell_solid(unit.grid_cell, false)
-    ├── unit.queue_free()
-    └── TurnManager.check_end_conditions()
-              └── enemy_units empty → emit "battle_won"
-                  player_units empty → emit "battle_lost"
+Unit death (signal handler in BattleMap._on_unit_died):
+  ├── units / player_units / enemy_units  .erase(unit)
+  ├── grid_mgr.set_cell_solid(unit.grid_cell, false)
+  ├── unit.queue_free()
+  ├── if enemy died: _refresh_enemy_threat()
+  └── TurnManager.check_end_conditions()
+            └── enemy_units empty → emit "battle_won"
+                player_units empty → emit "battle_lost"
 ```
+
+**Damage formula:** `max(1, attack - defense)`. Minimum 1 damage always
+applies; negative results are clamped.
 
 ## GridManager: Dual Pathfinding
 
 Two separate systems coexist in GridManager:
 
-| System         | Used by       | Algorithm | Solid source         |
-|----------------|---------------|-----------|----------------------|
-| BFS reachability | Player drag | Breadth-first search | `_solid_cells` dict + tile type |
-| A* pathfinding  | EnemyAI      | AStarGrid2D (built-in) | AStarGrid2D internal solid state |
+| System              | Used by    | Algorithm       | Solid source                    |
+|---------------------|------------|-----------------|----------------------------------|
+| BFS reachability    | Player drag, threat overlay, inspection | Breadth-first | `_solid_cells` dict + tile type |
+| A* pathfinding      | EnemyAI    | AStarGrid2D     | AStarGrid2D internal state      |
 
 Both are kept in sync via `set_cell_solid(cell, solid)`, which updates both
 the dict and `_astar.set_point_solid()`.
+
+`set_cell_solid(cell, false)` restores the A* point to the tile-type-driven
+solid state (solid only if `TileType.BLOCKED`).
 
 **AStarGrid2D quirk:** the destination cell must NOT be solid when calling
 `get_astar_path`. EnemyAI temporarily unblocks both endpoints before querying,
@@ -164,16 +272,60 @@ then restores them.
 ## Unit Visual States
 
 ```
-Unit._draw()
+Unit._draw()   (only active when _animated_sprite == null)
   │
   ├── base_color = PLAYER_COLOR (blue) or ENEMY_COLOR (red)
-  ├── if is_spent():  base_color = base_color.darkened(0.45)   ← grey-out
-  ├── if _is_dragging: base_color.a = 0.70                     ← translucent
-  │
+  ├── if is_spent():  base_color = base_color.darkened(0.45)
+  ├── if _is_dragging: base_color.a = 0.70
   ├── draw_circle(ZERO, 22px, base_color)
   ├── draw_arc(ZERO, 22px, white outline)
-  ├── draw_string(class_letter, centered)   ← K / C / A / M
-  └── HP bar:
-        background rect (dark red)
-        foreground rect (green, width scaled by current_hp / max_hp)
+  └── draw_string(class_letter, centered)   ← K / C / A / M / O
 ```
+
+When `_animated_sprite` is present (all configured classes), the circle is
+suppressed. Sprite modulate is used for state instead:
+
+| State          | modulate                               |
+|----------------|----------------------------------------|
+| Normal         | `Color.WHITE`                          |
+| Spent (moved)  | `Color.WHITE.darkened(0.45)`           |
+| Dragging (real unit, stays in place) | `Color(1,1,1, 0.4)` |
+
+HP bar (drawn in `_draw()` regardless of sprite state):
+
+```
+Sprite present:
+  bar_w = SPRITE_FRAME_PX * SPRITE_SCALE * 0.15   ← ~19.5 px world
+  bar_y = SPRITE_FRAME_PX * SPRITE_SCALE * 0.15   ← below centre
+
+Fallback circle:
+  bar_w = UNIT_RADIUS * 2.0                        ← 44 px
+  bar_y = UNIT_RADIUS + 4.0                        ← below circle
+```
+
+Both background (dark red 0.3,0,0) and foreground (Color.DARK_RED) rects
+drawn at same position; foreground width = `bar_w * (current_hp / max_hp)`.
+
+## Drag Overlay Nodes
+
+Created in `_begin_drag`, freed in `_end_drag`:
+
+| Node              | Type         | Parent      | z_index | Purpose                               |
+|-------------------|--------------|-------------|---------|---------------------------------------|
+| `_ghost`          | Node2D       | UnitsLayer  | 20      | Follows cursor; child AnimatedSprite2D cloned from unit |
+| `_drag_arrow`     | Line2D       | BattleMap   | 1       | Yellow breadcrumb path origin → proposed tile |
+| `_drag_arrowhead` | Polygon2D    | BattleMap   | 1       | Yellow triangle tip at path end        |
+| `_attack_arrow`   | Line2D       | BattleMap   | 1       | Orange shaft from landing cell → hovered enemy |
+| `_attack_arrowhead` | Polygon2D  | BattleMap   | 1       | Orange triangle tip at enemy cell      |
+
+Ghost sprite is created via `Unit.make_ghost_sprite()` which shares the
+same `SpriteFrames` resource (no duplication) and plays "walk" at 65% opacity.
+
+Ghost behavior:
+- Normal drag: ghost follows cursor freely
+- Hovering orange enemy cell: ghost **freezes** at `_last_hovered_move_cell`
+  (shows where the unit will actually land, not where cursor is)
+
+Arrow endpoint (`_drag_arrow` via `_arrow_path`) tracks the breadcrumb of
+visited blue tiles — not the raw cursor position. The attack arrow only
+appears when `_hovered_attack_target` is non-null.

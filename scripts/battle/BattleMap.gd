@@ -21,10 +21,25 @@ var enemy_units: Array[Unit] = []
 
 # Drag state
 var _dragged_unit: Unit = null
+var _inspected_enemy: Unit = null
+var _threat_visible: bool = true
 var _original_cell: Vector2i = Vector2i.ZERO
 var _reachable_cells: Array[Vector2i] = []
 var _extended_attack_cells: Array[Vector2i] = []  # orange: attackable from any move cell
 var _last_hovered_move_cell: Vector2i = Vector2i.ZERO  # last blue tile the cursor touched
+
+# Drag overlay: ghost afterimage + directional arrows
+var _ghost: Node2D = null
+var _drag_arrow: Line2D = null
+var _drag_arrowhead: Polygon2D = null
+var _attack_arrow: Line2D = null
+var _attack_arrowhead: Polygon2D = null
+
+# Path tracing for bending arrow
+var _arrow_path: Array[Vector2i] = []
+
+# Non-null when cursor hovers an orange enemy cell
+var _hovered_attack_target: Unit = null
 
 @onready var grid_mgr: GridManager = $GridManager
 @onready var highlight_lyr: HighlightLayer = $HighlightLayer
@@ -33,6 +48,9 @@ var _last_hovered_move_cell: Vector2i = Vector2i.ZERO  # last blue tile the curs
 func _ready() -> void:
 	TurnManager.start_battle(self)
 	_place_test_units()
+	TurnManager.turn_changed.connect(_on_turn_changed)
+	$HUD.threat_toggled.connect(_on_threat_toggled)
+	_refresh_enemy_threat()
 
 # ---------------------------------------------------------------------------
 # Unit placement
@@ -75,11 +93,42 @@ func _unhandled_input(event: InputEvent) -> void:
 			_begin_drag(get_global_mouse_position())
 		else:
 			_end_drag(get_global_mouse_position())
+	elif event is InputEventMouseMotion and not _dragged_unit:
+		var cell := grid_mgr.world_to_grid(get_global_mouse_position())
+		var hovered := get_unit_at(cell)
+		if hovered and not hovered.is_player_unit:
+			if hovered != _inspected_enemy:
+				_inspect_enemy(hovered)
+		elif _inspected_enemy:
+			_clear_inspection()
 	elif event is InputEventMouseMotion and _dragged_unit:
-		_dragged_unit.position = units_layer.to_local(get_global_mouse_position())
 		var hovered := grid_mgr.world_to_grid(get_global_mouse_position())
+
+		# Track last valid blue (movement) tile and build bending path.
 		if hovered in _reachable_cells and hovered not in _extended_attack_cells:
 			_last_hovered_move_cell = hovered
+			var idx := _arrow_path.find(hovered)
+			if idx >= 0:
+				_arrow_path = _arrow_path.slice(0, idx + 1)
+			else:
+				_arrow_path.append(hovered)
+
+		# Track whether cursor is over an attackable enemy.
+		if hovered in _extended_attack_cells:
+			var t := get_unit_at(hovered)
+			_hovered_attack_target = t if (t and not t.is_player_unit) else null
+		else:
+			_hovered_attack_target = null
+
+		# Ghost: freeze at movement tile when aiming at an enemy, else follow cursor.
+		if _ghost:
+			if _hovered_attack_target:
+				_ghost.position = units_layer.to_local(
+						grid_mgr.grid_to_world(_last_hovered_move_cell))
+			else:
+				_ghost.position = units_layer.to_local(get_global_mouse_position())
+
+		_update_drag_arrow()
 
 # ---------------------------------------------------------------------------
 # Drag & drop
@@ -92,9 +141,12 @@ func _begin_drag(world_pos: Vector2) -> void:
 	if not unit or not unit.is_player_unit or unit.has_moved:
 		return
 
+	_clear_inspection()
+
 	_dragged_unit = unit
 	_original_cell = unit.grid_cell
 	_last_hovered_move_cell = unit.grid_cell
+	_arrow_path = [unit.grid_cell]
 
 	var ally_cells: Array = []
 	for u in player_units:
@@ -116,9 +168,61 @@ func _begin_drag(world_pos: Vector2) -> void:
 	highlight_lyr.show_move_and_attack(_reachable_cells, _extended_attack_cells)
 	unit.start_drag()
 
+	# Ghost afterimage — follows the cursor while dragging.
+	_ghost = Node2D.new()
+	_ghost.z_index = 20
+	var gs := unit.make_ghost_sprite()
+	if gs:
+		_ghost.add_child(gs)
+	units_layer.add_child(_ghost)
+	_ghost.position = grid_mgr.grid_to_world(_original_cell)
+
+	# Arrow from origin to the proposed landing tile.
+	var origin := grid_mgr.grid_to_world(_original_cell)
+	_drag_arrow = Line2D.new()
+	_drag_arrow.width = 3.0
+	_drag_arrow.default_color = Color(1.0, 0.95, 0.3, 0.9)
+	_drag_arrow.z_index = 1
+	_drag_arrow.add_point(origin)
+	_drag_arrow.add_point(origin)
+	add_child(_drag_arrow)
+
+	_drag_arrowhead = Polygon2D.new()
+	_drag_arrowhead.color = Color(1.0, 0.95, 0.3, 0.9)
+	_drag_arrowhead.z_index = 1
+	add_child(_drag_arrowhead)
+
+	_attack_arrow = Line2D.new()
+	_attack_arrow.width = 3.0
+	_attack_arrow.default_color = Color(1.0, 0.35, 0.1, 0.9)
+	_attack_arrow.z_index = 1
+	add_child(_attack_arrow)
+
+	_attack_arrowhead = Polygon2D.new()
+	_attack_arrowhead.color = Color(1.0, 0.35, 0.1, 0.9)
+	_attack_arrowhead.z_index = 1
+	add_child(_attack_arrowhead)
+
 func _end_drag(world_pos: Vector2) -> void:
 	if not _dragged_unit:
 		return
+
+	# Clean up ghost and arrow overlay.
+	if _ghost:
+		_ghost.queue_free()
+		_ghost = null
+	if _drag_arrow:
+		_drag_arrow.queue_free()
+		_drag_arrow = null
+	if _drag_arrowhead:
+		_drag_arrowhead.queue_free()
+		_drag_arrowhead = null
+	if _attack_arrow:
+		_attack_arrow.queue_free()
+		_attack_arrow = null
+	if _attack_arrowhead:
+		_attack_arrowhead.queue_free()
+		_attack_arrowhead = null
 
 	var drop_cell := grid_mgr.world_to_grid(world_pos)
 	var unit := _dragged_unit
@@ -154,6 +258,51 @@ func _end_drag(world_pos: Vector2) -> void:
 	_reachable_cells = []
 	_extended_attack_cells = []
 	_last_hovered_move_cell = Vector2i.ZERO
+	_arrow_path = []
+	_hovered_attack_target = null
+
+func _update_drag_arrow() -> void:
+	if not _drag_arrow or not _drag_arrowhead:
+		return
+
+	# --- Movement arrow: trace the actual path of visited cells ---
+	var pts := PackedVector2Array()
+	for cell in _arrow_path:
+		pts.append(grid_mgr.grid_to_world(cell))
+	_drag_arrow.points = pts
+
+	if _arrow_path.size() >= 2:
+		var to      := grid_mgr.grid_to_world(_arrow_path[-1])
+		var from_pt := grid_mgr.grid_to_world(_arrow_path[-2])
+		var dir  := (to - from_pt).normalized()
+		var perp := Vector2(-dir.y, dir.x)
+		var hs   := 6.0
+		_drag_arrowhead.polygon = PackedVector2Array([
+			to + dir * hs * 1.5,
+			to - dir * hs + perp * hs,
+			to - dir * hs - perp * hs,
+		])
+	else:
+		_drag_arrowhead.polygon = PackedVector2Array()
+
+	# --- Attack arrow: from movement tile toward hovered enemy ---
+	if _hovered_attack_target and _attack_arrow:
+		var a := grid_mgr.grid_to_world(_last_hovered_move_cell)
+		var b := grid_mgr.grid_to_world(_hovered_attack_target.grid_cell)
+		_attack_arrow.points = PackedVector2Array([a, b])
+		var dir  := (b - a).normalized()
+		var perp := Vector2(-dir.y, dir.x)
+		var hs   := 6.0
+		_attack_arrowhead.polygon = PackedVector2Array([
+			b + dir * hs * 1.5,
+			b - dir * hs + perp * hs,
+			b - dir * hs - perp * hs,
+		])
+	else:
+		if _attack_arrow:
+			_attack_arrow.points = PackedVector2Array()
+		if _attack_arrowhead:
+			_attack_arrowhead.polygon = PackedVector2Array()
 
 func _commit_move(unit: Unit, cell: Vector2i) -> void:
 	grid_mgr.set_cell_solid(_original_cell, false)
@@ -195,12 +344,12 @@ func _pick_attacker_cell(target_cell: Vector2i, unit: Unit) -> Vector2i:
 			+ abs(_last_hovered_move_cell.y - target_cell.y)
 	var occupant := get_unit_at(_last_hovered_move_cell)
 	var cell_free := occupant == null or occupant == unit
-	if cell_free and to_target >= 1 and to_target <= unit.attack_range:
+	if cell_free and to_target == unit.attack_range:
 		return _last_hovered_move_cell
 	return _find_best_attacker_cell(_original_cell, target_cell, _reachable_cells, unit.attack_range)
 
 ## Reachable cell closest to `from` that is within `atk_range` of `target`.
-## Minimises movement so the unit travels the shortest path to attack.
+## Pass 1 prefers cells at exactly max range; Pass 2 falls back to any valid range.
 func _find_best_attacker_cell(
 		from: Vector2i,
 		target: Vector2i,
@@ -209,13 +358,27 @@ func _find_best_attacker_cell(
 
 	var best_cell := from
 	var best_dist := INF
+
+	# Pass 1: prefer exact max range.
 	for cell in reachable:
 		var to_target: int = abs(cell.x - target.x) + abs(cell.y - target.y)
-		if to_target >= 1 and to_target <= atk_range:
-			var from_start: int = abs(cell.x - from.x) + abs(cell.y - from.y)
-			if from_start < best_dist:
-				best_dist = from_start
+		if to_target == atk_range:
+			var d: int = abs(cell.x - from.x) + abs(cell.y - from.y)
+			if d < best_dist:
+				best_dist = d
 				best_cell = cell
+
+	# Pass 2: fallback — accept any cell within range.
+	if best_cell == from:
+		best_dist = INF
+		for cell in reachable:
+			var to_target: int = abs(cell.x - target.x) + abs(cell.y - target.y)
+			if to_target >= 1 and to_target <= atk_range:
+				var d: int = abs(cell.x - from.x) + abs(cell.y - from.y)
+				if d < best_dist:
+					best_dist = d
+					best_cell = cell
+
 	return best_cell
 
 # ---------------------------------------------------------------------------
@@ -248,4 +411,66 @@ func _on_unit_died(unit: Unit) -> void:
 	enemy_units.erase(unit)
 	grid_mgr.set_cell_solid(unit.grid_cell, false)
 	unit.queue_free()
+	if not unit.is_player_unit:
+		_refresh_enemy_threat()
 	TurnManager.check_end_conditions()
+
+# ---------------------------------------------------------------------------
+# Threat range
+# ---------------------------------------------------------------------------
+
+func _refresh_enemy_threat() -> void:
+	if not _threat_visible:
+		highlight_lyr.set_threat([])
+		return
+	for e in enemy_units:
+		if is_instance_valid(e):
+			grid_mgr.set_cell_solid(e.grid_cell, false)
+
+	var seen: Dictionary = {}
+	var player_cells: Array = player_units.map(func(u): return u.grid_cell)
+
+	for enemy in enemy_units:
+		if not is_instance_valid(enemy):
+			continue
+		var reachable := grid_mgr.get_reachable_cells(
+			enemy.grid_cell, enemy.data.move_range, false, player_cells)
+		var attack_cells := _get_extended_attack_cells(reachable, enemy.attack_range)
+		for cell in reachable:
+			seen[cell] = true
+		for cell in attack_cells:
+			seen[cell] = true
+
+	for e in enemy_units:
+		if is_instance_valid(e):
+			grid_mgr.set_cell_solid(e.grid_cell, true)
+
+	var threat: Array[Vector2i] = []
+	for cell in seen:
+		threat.append(cell)
+	highlight_lyr.set_threat(threat)
+
+func _on_turn_changed(state) -> void:
+	if state == TurnManager.State.PLAYER_TURN:
+		_refresh_enemy_threat()
+
+func _on_threat_toggled(on: bool) -> void:
+	_threat_visible = on
+	if on:
+		_refresh_enemy_threat()
+	else:
+		highlight_lyr.set_threat([])
+
+func _inspect_enemy(enemy: Unit) -> void:
+	_inspected_enemy = enemy
+	var player_cells: Array = player_units.map(func(u): return u.grid_cell)
+	grid_mgr.set_cell_solid(enemy.grid_cell, false)
+	var move_cells := grid_mgr.get_reachable_cells(
+		enemy.grid_cell, enemy.data.move_range, false, player_cells)
+	grid_mgr.set_cell_solid(enemy.grid_cell, true)
+	var attack_cells := _get_extended_attack_cells(move_cells, enemy.attack_range)
+	highlight_lyr.show_move_and_attack(move_cells, attack_cells)
+
+func _clear_inspection() -> void:
+	_inspected_enemy = null
+	highlight_lyr.clear()

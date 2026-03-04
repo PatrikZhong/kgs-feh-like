@@ -148,19 +148,26 @@ func set_attacked() -> void:
 
 func start_drag() -> void:
 	_is_dragging = true
-	z_index = 100
-	if _animated_sprite:
-		_animated_sprite.play("walk")
-		_animated_sprite.modulate.a = 0.70
+	modulate.a = 0.4  # dim original in place; ghost takes over visually
 	queue_redraw()
 
 func end_drag() -> void:
 	_is_dragging = false
-	z_index = 0
-	if _animated_sprite:
-		_animated_sprite.play("idle")
-		_animated_sprite.modulate.a = 1.0
+	modulate.a = 1.0
 	queue_redraw()
+
+## Returns a semi-transparent AnimatedSprite2D clone suitable for use as a
+## drag ghost. The caller is responsible for adding it to the scene tree.
+func make_ghost_sprite() -> AnimatedSprite2D:
+	if not _animated_sprite:
+		return null
+	var ghost := AnimatedSprite2D.new()
+	ghost.sprite_frames = _animated_sprite.sprite_frames
+	ghost.scale         = _animated_sprite.scale
+	ghost.flip_h        = _animated_sprite.flip_h
+	ghost.modulate      = Color(1.0, 1.0, 1.0, 0.65)
+	ghost.play("walk")
+	return ghost
 
 func play_hit_flash() -> void:
 	if _animated_sprite:
