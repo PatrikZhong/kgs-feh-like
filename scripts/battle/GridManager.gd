@@ -1,11 +1,14 @@
+@tool
 class_name GridManager
 extends Node2D
 
 enum TileType { NORMAL, HIGH_GROUND, DANGEROUS, BLOCKED }
 
 const TILE_SIZE := Vector2i(40, 40)
-const GRID_WIDTH := 8
-const GRID_HEIGHT := 8
+@export var grid_width: int = 8
+@export var grid_height: int = 8
+## Set false once you have a TileMapLayer painting the background.
+@export var draw_background: bool = true
 
 ## Stores overridden tile types (cells not listed are NORMAL).
 var _tile_types: Dictionary = {}
@@ -22,7 +25,8 @@ var _bg_tile: Texture2D = null
 
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	_bg_tile = _slice_tile(SaveData.current_battle_id)
+	if not Engine.is_editor_hint():
+		_bg_tile = _slice_tile(SaveData.current_battle_id)
 	_setup_astar()
 	queue_redraw()
 
@@ -43,7 +47,7 @@ func _slice_tile(index: int) -> Texture2D:
 
 func _setup_astar() -> void:
 	_astar = AStarGrid2D.new()
-	_astar.region = Rect2i(0, 0, GRID_WIDTH, GRID_HEIGHT)
+	_astar.region = Rect2i(0, 0, grid_width, grid_height)
 	_astar.cell_size = Vector2(TILE_SIZE)
 	_astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_NEVER
 	_astar.update()
@@ -59,7 +63,7 @@ func world_to_grid(world_pos: Vector2) -> Vector2i:
 	return Vector2i(world_pos / Vector2(TILE_SIZE))
 
 func is_in_bounds(cell: Vector2i) -> bool:
-	return cell.x >= 0 and cell.x < GRID_WIDTH and cell.y >= 0 and cell.y < GRID_HEIGHT
+	return cell.x >= 0 and cell.x < grid_width and cell.y >= 0 and cell.y < grid_height
 
 # ---------------------------------------------------------------------------
 # Tile type helpers
@@ -141,6 +145,10 @@ func _get_neighbors(cell: Vector2i) -> Array[Vector2i]:
 # Pathfinding (A*)
 # ---------------------------------------------------------------------------
 
+## Total world size of the grid in pixels.
+func grid_world_size() -> Vector2:
+	return Vector2(grid_width * TILE_SIZE.x, grid_height * TILE_SIZE.y)
+
 func get_astar_path(from: Vector2i, to: Vector2i) -> Array[Vector2i]:
 	if not is_in_bounds(from) or not is_in_bounds(to):
 		return []
@@ -151,19 +159,33 @@ func get_astar_path(from: Vector2i, to: Vector2i) -> Array[Vector2i]:
 # ---------------------------------------------------------------------------
 
 func _draw() -> void:
-	for y in range(GRID_HEIGHT):
-		for x in range(GRID_WIDTH):
+	for y in range(grid_height):
+		for x in range(grid_width):
 			var cell := Vector2i(x, y)
 			var rect := Rect2(Vector2(cell * TILE_SIZE), Vector2(TILE_SIZE))
 
-			# Draw base tile sprite (fallback to solid green if texture not loaded).
-			if _bg_tile:
-				draw_texture_rect(_bg_tile, rect, false)
-			else:
-				draw_rect(rect, Color(0.28, 0.44, 0.28), true)
+			# Draw base tile sprite (skipped when a TileMapLayer handles the background).
+			if draw_background:
+				if _bg_tile:
+					draw_texture_rect(_bg_tile, rect, false)
+				else:
+					draw_rect(rect, Color(0.28, 0.44, 0.28), true)
 
 			# Overlay a semi-transparent tint for non-normal tile types.
 			match get_tile_type(cell):
 				TileType.HIGH_GROUND: draw_rect(rect, Color(0.55, 0.45, 0.10, 0.50), true)
 				TileType.DANGEROUS:   draw_rect(rect, Color(0.60, 0.15, 0.15, 0.50), true)
 				TileType.BLOCKED:     draw_rect(rect, Color(0.10, 0.10, 0.10, 0.70), true)
+
+	# In the editor: draw cell grid lines and a bright outer border so you can
+	# see exactly which TileMapLayer cells to paint.
+	if Engine.is_editor_hint():
+		var gw := grid_width  * TILE_SIZE.x
+		var gh := grid_height * TILE_SIZE.y
+		for y in range(grid_height + 1):
+			var yf := float(y * TILE_SIZE.y)
+			draw_line(Vector2(0, yf), Vector2(gw, yf), Color(1, 1, 1, 0.25), 1.0)
+		for x in range(grid_width + 1):
+			var xf := float(x * TILE_SIZE.x)
+			draw_line(Vector2(xf, 0), Vector2(xf, gh), Color(1, 1, 1, 0.25), 1.0)
+		draw_rect(Rect2(0, 0, gw, gh), Color(1, 1, 0, 0.9), false, 2.0)

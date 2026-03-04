@@ -5,9 +5,9 @@ const OVERWORLD_NODE_SCENE := preload("res://scenes/overworld/OverworldNode.tscn
 # Inline world data for the prototype.
 # TODO: load from a WorldGraph .tres resource.
 const _WORLD_NODES := [
-	{"id": 0, "label": "Tutorial",    "pos": Vector2(200, 300), "scene": "res://scenes/battle/BattleMap.tscn"},
-	{"id": 1, "label": "Forest Path", "pos": Vector2(420, 180), "scene": "res://scenes/battle/BattleMap.tscn"},
-	{"id": 2, "label": "River Ford",  "pos": Vector2(640, 310), "scene": "res://scenes/battle/BattleMap.tscn"},
+	{"id": 0, "label": "Tutorial",    "pos": Vector2(200, 300), "scene": "res://scenes/battle/battles/Battle_0.tscn"},
+	{"id": 1, "label": "Forest Path", "pos": Vector2(420, 180), "scene": "res://scenes/battle/battles/Battle_1.tscn"},
+	{"id": 2, "label": "River Ford",  "pos": Vector2(640, 310), "scene": "res://scenes/battle/battles/Battle_2.tscn"},
 ]
 const _WORLD_EDGES := [
 	{"a": 0, "b": 1},

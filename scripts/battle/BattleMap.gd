@@ -44,26 +44,47 @@ var _hovered_attack_target: Unit = null
 @onready var grid_mgr: GridManager = $GridManager
 @onready var highlight_lyr: HighlightLayer = $HighlightLayer
 @onready var units_layer: Node2D = $UnitsLayer
+@onready var spawners_layer: Node2D = $SpawnersLayer
 
 func _ready() -> void:
 	TurnManager.start_battle(self)
+	_fit_camera()
 	_place_test_units()
 	TurnManager.turn_changed.connect(_on_turn_changed)
 	$HUD.threat_toggled.connect(_on_threat_toggled)
 	_refresh_enemy_threat()
+
+## Centre the camera on the grid and pick the largest integer zoom that fits
+## the grid inside the viewport with a small margin.
+func _fit_camera() -> void:
+	var world_size := grid_mgr.grid_world_size()
+	var viewport_size := get_viewport().get_visible_rect().size
+	var zoom_x: float = floor(viewport_size.x / world_size.x)
+	var zoom_y: float = floor(viewport_size.y / world_size.y)
+	var z := maxf(1.0, minf(zoom_x, zoom_y))
+	var cam := $Camera2D
+	cam.position = world_size / 2.0
+	cam.zoom = Vector2(z, z)
 
 # ---------------------------------------------------------------------------
 # Unit placement
 # ---------------------------------------------------------------------------
 
 func _place_test_units() -> void:
-	_spawn(KNIGHT_DATA, Vector2i(1, 1), true)
-	_spawn(ARCHER_DATA, Vector2i(1, 3), true)
-	_spawn(MAGE_DATA,   Vector2i(1, 5), true)
+	var spawners: Array = spawners_layer.get_children().filter(
+			func(c: Node) -> bool: return c is UnitSpawner and c.unit_data != null)
 
-	var spawns: Array = BATTLE_ENEMY_SPAWNS[SaveData.current_battle_id % BATTLE_ENEMY_SPAWNS.size()]
-	for cell: Vector2i in spawns:
-		_spawn(ARMORED_ORC_DATA, cell, false)
+	if spawners.size() > 0:
+		for s: UnitSpawner in spawners:
+			_spawn(s.unit_data, s.cell, s.is_player_unit)
+	else:
+		push_warning("BattleMap: SpawnersLayer is empty — using hardcoded fallback layout.")
+		_spawn(KNIGHT_DATA, Vector2i(1, 1), true)
+		_spawn(ARCHER_DATA, Vector2i(1, 3), true)
+		_spawn(MAGE_DATA,   Vector2i(1, 5), true)
+		var spawns: Array = BATTLE_ENEMY_SPAWNS[SaveData.current_battle_id % BATTLE_ENEMY_SPAWNS.size()]
+		for cell: Vector2i in spawns:
+			_spawn(ARMORED_ORC_DATA, cell, false)
 
 func _spawn(data: UnitData, cell: Vector2i, is_player: bool) -> Unit:
 	var unit: Unit = UNIT_SCENE.instantiate()
