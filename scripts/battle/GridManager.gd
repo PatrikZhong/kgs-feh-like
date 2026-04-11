@@ -85,6 +85,21 @@ func world_to_grid(world_pos: Vector2) -> Vector2i:
 func is_in_bounds(cell: Vector2i) -> bool:
 	return cell.x >= 0 and cell.x < grid_width and cell.y >= 0 and cell.y < grid_height
 
+## Returns all grid cells that have a painted tile (grid-local 0-based coords).
+## Falls back to the full grid if no TileMapLayer is present.
+func get_valid_cells() -> Array[Vector2i]:
+	var tml := get_parent().get_node_or_null("TileMapLayer") as TileMapLayer
+	if tml == null:
+		var result: Array[Vector2i] = []
+		for y in range(grid_height):
+			for x in range(grid_width):
+				result.append(Vector2i(x, y))
+		return result
+	var result: Array[Vector2i] = []
+	for world_cell in tml.get_used_cells():
+		result.append(world_cell - _origin)
+	return result
+
 # ---------------------------------------------------------------------------
 # Tile type helpers
 # ---------------------------------------------------------------------------

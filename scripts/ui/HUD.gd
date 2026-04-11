@@ -30,15 +30,24 @@ func _on_new_round(count: int) -> void:
 
 func _refresh_turn_ui(state: TurnManager.State) -> void:
 	match state:
+		TurnManager.State.PLACEMENT:
+			turn_label.text = "Placement Phase"
+			end_turn_btn.text = "Begin Battle"
+			end_turn_btn.disabled = false
 		TurnManager.State.PLAYER_TURN:
 			turn_label.text = "Turn %d — Your Turn" % TurnManager.turn_count
+			end_turn_btn.text = "End Turn"
 			end_turn_btn.disabled = false
 		TurnManager.State.ENEMY_TURN:
 			turn_label.text = "Turn %d — Enemy Turn" % TurnManager.turn_count
+			end_turn_btn.text = "End Turn"
 			end_turn_btn.disabled = true
 
-## Marks all unmoved player units as spent, then passes to the enemy.
+## "Begin Battle" during placement, or "End Turn" during combat.
 func _on_end_turn_pressed() -> void:
+	if TurnManager.current_state == TurnManager.State.PLACEMENT:
+		TurnManager.start_combat()
+		return
 	if TurnManager.battle_map:
 		for unit in TurnManager.battle_map.player_units:
 			if is_instance_valid(unit) and not unit.has_moved:

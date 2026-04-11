@@ -8,9 +8,9 @@ signal battle_won
 signal battle_lost
 signal new_round(count: int)
 
-enum State { PLAYER_TURN, ENEMY_TURN }
+enum State { PLACEMENT, PLAYER_TURN, ENEMY_TURN }
 
-var current_state: State = State.PLAYER_TURN
+var current_state: State = State.PLACEMENT
 var turn_count: int = 1
 var battle_map = null
 
@@ -21,6 +21,13 @@ var battle_map = null
 func start_battle(map) -> void:
 	battle_map = map
 	turn_count = 1
+	current_state = State.PLACEMENT
+	emit_signal("turn_changed", current_state)
+
+## Called by HUD "Begin Battle" button to leave the placement phase.
+func start_combat() -> void:
+	if current_state != State.PLACEMENT:
+		return
 	current_state = State.PLAYER_TURN
 	emit_signal("turn_changed", current_state)
 

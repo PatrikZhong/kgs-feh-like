@@ -3,3 +3,29 @@
 [ext_resource type="PackedScene" uid="uid://nw1x1nxxma3n" path="res://scenes/battle/BattleMap.tscn" id="1_battle"]
 
 [node name="Battle_1" instance=ExtResource("1_battle")]
+
+[node name="Camera2D" parent="." index="0"]
+script = null
+
+[node name="GridManager" parent="." index="2"]
+texture_filter = 1
+
+[node name="BottomBar" parent="HUD" index="0"]
+anchors_preset = 12
+offset_top = -72.0
+grow_horizontal = 2
+grow_vertical = 0
+
+[node name="HBox" parent="HUD/BottomBar" index="0"]
+anchors_preset = 15
+offset_left = 0.0
+offset_top = 0.0
+offset_right = 0.0
+offset_bottom = 0.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="ResultPanel" parent="HUD" index="1"]
+anchors_preset = 8
+grow_horizontal = 2
+grow_vertical = 2

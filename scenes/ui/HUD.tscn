@@ -10,10 +10,12 @@ script = ExtResource("1")
 [node name="VBoxRoot" type="VBoxContainer" parent="."]
 anchor_right = 1.0
 anchor_bottom = 1.0
+mouse_filter = 2
 
 [node name="Spacer" type="Control" parent="VBoxRoot"]
 layout_mode = 2
 size_flags_vertical = 3
+mouse_filter = 2
 
 [node name="BottomBar" type="PanelContainer" parent="VBoxRoot"]
 layout_mode = 2

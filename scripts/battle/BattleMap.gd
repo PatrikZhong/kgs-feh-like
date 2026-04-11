@@ -52,9 +52,9 @@ var _hovered_attack_target: Unit = null
 func _ready() -> void:
 	TurnManager.start_battle(self)
 	_fit_camera()
-	_place_test_units()
 	TurnManager.turn_changed.connect(_on_turn_changed)
 	$HUD.threat_toggled.connect(_on_threat_toggled)
+	_begin_placement()
 	_refresh_enemy_threat()
 
 ## Fit the camera so the full grid is visible above the HUD bar, then hand off
@@ -70,24 +70,52 @@ func _fit_camera() -> void:
 	_cam.setup(grid_mgr.grid_world_center(), world_size, z)
 
 # ---------------------------------------------------------------------------
-# Unit placement
+# Unit placement (pre-battle phase)
 # ---------------------------------------------------------------------------
 
-func _place_test_units() -> void:
-	var spawners: Array = spawners_layer.get_children().filter(
-			func(c: Node) -> bool: return c is UnitSpawner and c.unit_data != null)
+## Spawns all units for the placement phase.
+## Player units occupy the leftmost valid cells; enemies are placed randomly
+## on the remaining valid cells.
+func _begin_placement() -> void:
+	var valid_cells: Array[Vector2i] = grid_mgr.get_valid_cells()
+	# Sort left-to-right so the player roster defaults to the left side.
+	valid_cells.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return a.x < b.x)
 
+	var taken: Dictionary = {}
+
+	# Determine player roster: use spawners if present, else the default three.
+	var spawners: Array = spawners_layer.get_children().filter(
+		func(c: Node) -> bool: return c is UnitSpawner and c.unit_data != null)
+
+	var player_roster: Array = []
 	if spawners.size() > 0:
-		for s: UnitSpawner in spawners:
-			_spawn(s.unit_data, s.cell, s.is_player_unit)
+		for s in spawners:
+			player_roster.append((s as UnitSpawner).unit_data)
 	else:
-		push_warning("BattleMap: SpawnersLayer is empty — using hardcoded fallback layout.")
-		_spawn(KNIGHT_DATA, Vector2i(1, 1), true)
-		_spawn(ARCHER_DATA, Vector2i(1, 3), true)
-		_spawn(MAGE_DATA,   Vector2i(1, 5), true)
-		var spawns: Array = BATTLE_ENEMY_SPAWNS[SaveData.current_battle_id % BATTLE_ENEMY_SPAWNS.size()]
-		for cell: Vector2i in spawns:
-			_spawn(ARMORED_ORC_DATA, cell, false)
+		player_roster = [KNIGHT_DATA, ARCHER_DATA, MAGE_DATA]
+
+	# Place player units on the leftmost valid cells.
+	var pi: int = 0
+	for cell in valid_cells:
+		if pi >= player_roster.size():
+			break
+		_spawn(player_roster[pi], cell, true)
+		taken[cell] = true
+		pi += 1
+
+	# Build pool for enemies from all remaining cells, then shuffle.
+	var enemy_pool: Array[Vector2i] = []
+	for cell in valid_cells:
+		if not taken.has(cell):
+			enemy_pool.append(cell)
+	enemy_pool.shuffle()
+
+	# Place enemies.
+	var enemy_roster: Array = [ARMORED_ORC_DATA, ARMORED_ORC_DATA, ARMORED_ORC_DATA]
+	for i in range(enemy_roster.size()):
+		if i >= enemy_pool.size():
+			break
+		_spawn(enemy_roster[i], enemy_pool[i], false)
 
 func _spawn(data: UnitData, cell: Vector2i, is_player: bool) -> Unit:
 	var unit: Unit = UNIT_SCENE.instantiate()
@@ -109,7 +137,8 @@ func _spawn(data: UnitData, cell: Vector2i, is_player: bool) -> Unit:
 # ---------------------------------------------------------------------------
 
 func _unhandled_input(event: InputEvent) -> void:
-	if TurnManager.current_state != TurnManager.State.PLAYER_TURN:
+	var state := TurnManager.current_state
+	if state != TurnManager.State.PLAYER_TURN and state != TurnManager.State.PLACEMENT:
 		return
 
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
@@ -161,8 +190,11 @@ func _unhandled_input(event: InputEvent) -> void:
 func _begin_drag(world_pos: Vector2) -> void:
 	var cell := grid_mgr.world_to_grid(world_pos)
 	var unit := get_unit_at(cell)
+	var is_placement := TurnManager.current_state == TurnManager.State.PLACEMENT
 
-	if not unit or not unit.is_player_unit or unit.has_moved:
+	if not unit or not unit.is_player_unit:
+		return
+	if not is_placement and unit.has_moved:
 		return
 
 	_cam.panning_locked = true
@@ -173,22 +205,34 @@ func _begin_drag(world_pos: Vector2) -> void:
 	_last_hovered_move_cell = unit.grid_cell
 	_arrow_path = [unit.grid_cell]
 
-	var ally_cells: Array = []
-	for u in player_units:
-		if u != unit:
-			ally_cells.append(u.grid_cell)
+	if is_placement:
+		# Highlight every valid tile that isn't blocked by another unit.
+		var all_occupied: Array[Vector2i] = []
+		for u in units:
+			if u != unit:
+				all_occupied.append(u.grid_cell)
+		var placement_cells: Array[Vector2i] = []
+		for c in grid_mgr.get_valid_cells():
+			if c not in all_occupied:
+				placement_cells.append(c)
+		_reachable_cells = placement_cells
+		_extended_attack_cells = []
+	else:
+		var ally_cells: Array = []
+		for u in player_units:
+			if u != unit:
+				ally_cells.append(u.grid_cell)
 
-	_reachable_cells = grid_mgr.get_reachable_cells(
-		unit.grid_cell, unit.data.move_range, unit.data.can_jump_allies, ally_cells
-	)
-	_extended_attack_cells = _get_extended_attack_cells(_reachable_cells, unit.attack_range)
+		_reachable_cells = grid_mgr.get_reachable_cells(
+			unit.grid_cell, unit.data.move_range, unit.data.can_jump_allies, ally_cells
+		)
+		_extended_attack_cells = _get_extended_attack_cells(_reachable_cells, unit.attack_range)
 
-	# Enemies that sit inside movement range are also valid attack targets.
-	# The geometric orange ring excludes reachable cells, so we add them manually.
-	for u in enemy_units:
-		if is_instance_valid(u) and u.grid_cell in _reachable_cells \
-				and u.grid_cell not in _extended_attack_cells:
-			_extended_attack_cells.append(u.grid_cell)
+		# Enemies inside movement range are also valid attack targets.
+		for u in enemy_units:
+			if is_instance_valid(u) and u.grid_cell in _reachable_cells \
+					and u.grid_cell not in _extended_attack_cells:
+				_extended_attack_cells.append(u.grid_cell)
 
 	highlight_lyr.show_move_and_attack(_reachable_cells, _extended_attack_cells)
 	unit.start_drag()
@@ -260,8 +304,15 @@ func _end_drag(world_pos: Vector2) -> void:
 	var occupant := get_unit_at(drop_cell)
 	var cell_free := occupant == null or occupant == unit
 
+	if TurnManager.current_state == TurnManager.State.PLACEMENT:
+		# — Placement: free repositioning, no turn end —
+		if drop_cell in _reachable_cells and drop_cell != _original_cell and cell_free:
+			_commit_placement_move(unit, drop_cell)
+		else:
+			unit.position = grid_mgr.grid_to_world(_original_cell)
+
 	# — Drop on a movement tile: just move —
-	if drop_cell in _reachable_cells and drop_cell != _original_cell and cell_free:
+	elif drop_cell in _reachable_cells and drop_cell != _original_cell and cell_free:
 		_commit_move(unit, drop_cell)
 		TurnManager.end_player_turn()
 
@@ -339,6 +390,13 @@ func _commit_move(unit: Unit, cell: Vector2i) -> void:
 	var tween := create_tween()
 	tween.tween_property(unit, "position", grid_mgr.grid_to_world(cell), 0.10)
 	unit.set_moved()
+
+## Repositions a unit during the placement phase (no turn cost, no set_moved).
+func _commit_placement_move(unit: Unit, cell: Vector2i) -> void:
+	grid_mgr.set_cell_solid(_original_cell, false)
+	grid_mgr.set_cell_solid(cell, true)
+	unit.grid_cell = cell
+	unit.position = grid_mgr.grid_to_world(cell)
 
 # ---------------------------------------------------------------------------
 # Attack helpers
@@ -478,6 +536,7 @@ func _refresh_enemy_threat() -> void:
 
 func _on_turn_changed(state) -> void:
 	if state == TurnManager.State.PLAYER_TURN:
+		_clear_inspection()
 		_refresh_enemy_threat()
 
 func _on_threat_toggled(on: bool) -> void:
