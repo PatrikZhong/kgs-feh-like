@@ -1,5 +1,7 @@
 extends Node2D
 
+const _BattleCam := preload("res://scripts/battle/BattleCamera.gd")
+
 const UNIT_SCENE := preload("res://scenes/battle/Unit.tscn")
 const KNIGHT_DATA      := preload("res://resources/units/KnightData.tres")
 const CAVALRY_DATA     := preload("res://resources/units/CavalryData.tres")
@@ -45,6 +47,7 @@ var _hovered_attack_target: Unit = null
 @onready var highlight_lyr: HighlightLayer = $HighlightLayer
 @onready var units_layer: Node2D = $UnitsLayer
 @onready var spawners_layer: Node2D = $SpawnersLayer
+@onready var _cam: _BattleCam = $Camera2D
 
 func _ready() -> void:
 	TurnManager.start_battle(self)
@@ -54,17 +57,17 @@ func _ready() -> void:
 	$HUD.threat_toggled.connect(_on_threat_toggled)
 	_refresh_enemy_threat()
 
-## Centre the camera on the grid and pick the largest integer zoom that fits
-## the grid inside the viewport with a small margin.
+## Fit the camera so the full grid is visible above the HUD bar, then hand off
+## to BattleCamera which handles panning and scroll-zoom from that point on.
 func _fit_camera() -> void:
-	var world_size := grid_mgr.grid_world_size()
+	var world_size    := grid_mgr.grid_world_size()
 	var viewport_size := get_viewport().get_visible_rect().size
-	var zoom_x: float = floor(viewport_size.x / world_size.x)
-	var zoom_y: float = floor(viewport_size.y / world_size.y)
+	var usable        := Vector2(viewport_size.x,
+								 viewport_size.y - _BattleCam.HUD_HEIGHT)
+	var zoom_x: float = floor(usable.x / world_size.x)
+	var zoom_y: float = floor(usable.y / world_size.y)
 	var z := maxf(1.0, minf(zoom_x, zoom_y))
-	var cam := $Camera2D
-	cam.position = world_size / 2.0
-	cam.zoom = Vector2(z, z)
+	_cam.setup(grid_mgr.grid_world_center(), world_size, z)
 
 # ---------------------------------------------------------------------------
 # Unit placement
@@ -162,6 +165,7 @@ func _begin_drag(world_pos: Vector2) -> void:
 	if not unit or not unit.is_player_unit or unit.has_moved:
 		return
 
+	_cam.panning_locked = true
 	_clear_inspection()
 
 	_dragged_unit = unit
@@ -228,6 +232,7 @@ func _end_drag(world_pos: Vector2) -> void:
 	if not _dragged_unit:
 		return
 
+	_cam.panning_locked = false
 	# Clean up ghost and arrow overlay.
 	if _ghost:
 		_ghost.queue_free()

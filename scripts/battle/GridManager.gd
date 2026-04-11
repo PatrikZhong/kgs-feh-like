@@ -14,6 +14,8 @@ const TILE_SIZE := Vector2i(40, 40)
 var _tile_types: Dictionary = {}
 ## Cells currently blocked by a unit.
 var _solid_cells: Dictionary = {}
+## TileMapLayer painted-area origin in tile coordinates (usually (0,0)).
+var _origin: Vector2i = Vector2i.ZERO
 
 var _astar: AStarGrid2D
 
@@ -27,8 +29,24 @@ func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	if not Engine.is_editor_hint():
 		_bg_tile = _slice_tile(SaveData.current_battle_id)
+	_read_dimensions_from_tilemap()
 	_setup_astar()
 	queue_redraw()
+
+## Reads grid dimensions and origin from the sibling TileMapLayer's painted area.
+## Handles non-zero origins: the painted area can start at any tile coordinate.
+## If the layer is absent or empty, the exported defaults are kept.
+func _read_dimensions_from_tilemap() -> void:
+	var tml := get_parent().get_node_or_null("TileMapLayer") as TileMapLayer
+	if tml == null:
+		return
+	var rect: Rect2i = tml.get_used_rect()
+	if rect.size == Vector2i.ZERO:
+		return
+	_origin     = rect.position
+	grid_width  = rect.size.x
+	grid_height = rect.size.y
+	draw_background = false  # TileMapLayer owns the visual; suppress GridManager's fallback draw
 
 ## Returns an AtlasTexture for tile at `index` in GRASS+.png
 ## (left-to-right, top-to-bottom order).
@@ -56,11 +74,13 @@ func _setup_astar() -> void:
 # Coordinate helpers
 # ---------------------------------------------------------------------------
 
+## World centre of a grid cell (grid coords are 0-based, offset by _origin).
 func grid_to_world(cell: Vector2i) -> Vector2:
-	return Vector2(cell * TILE_SIZE) + Vector2(TILE_SIZE) / 2.0
+	return Vector2((cell + _origin) * TILE_SIZE) + Vector2(TILE_SIZE) / 2.0
 
+## Grid cell that contains a world position.
 func world_to_grid(world_pos: Vector2) -> Vector2i:
-	return Vector2i(world_pos / Vector2(TILE_SIZE))
+	return Vector2i((world_pos - Vector2(_origin * TILE_SIZE)) / Vector2(TILE_SIZE))
 
 func is_in_bounds(cell: Vector2i) -> bool:
 	return cell.x >= 0 and cell.x < grid_width and cell.y >= 0 and cell.y < grid_height
@@ -145,9 +165,14 @@ func _get_neighbors(cell: Vector2i) -> Array[Vector2i]:
 # Pathfinding (A*)
 # ---------------------------------------------------------------------------
 
-## Total world size of the grid in pixels.
+## Total world size of the painted grid in pixels (width × height, no origin offset).
 func grid_world_size() -> Vector2:
 	return Vector2(grid_width * TILE_SIZE.x, grid_height * TILE_SIZE.y)
+
+## World-space centre of the painted grid (accounts for non-zero TileMapLayer origin).
+func grid_world_center() -> Vector2:
+	return Vector2((_origin.x + grid_width * 0.5) * TILE_SIZE.x,
+				   (_origin.y + grid_height * 0.5) * TILE_SIZE.y)
 
 func get_astar_path(from: Vector2i, to: Vector2i) -> Array[Vector2i]:
 	if not is_in_bounds(from) or not is_in_bounds(to):
@@ -162,7 +187,9 @@ func _draw() -> void:
 	for y in range(grid_height):
 		for x in range(grid_width):
 			var cell := Vector2i(x, y)
-			var rect := Rect2(Vector2(cell * TILE_SIZE), Vector2(TILE_SIZE))
+			# Draw position is offset by _origin so it aligns with the TileMapLayer.
+			var world_cell := cell + _origin
+			var rect := Rect2(Vector2(world_cell * TILE_SIZE), Vector2(TILE_SIZE))
 
 			# Draw base tile sprite (skipped when a TileMapLayer handles the background).
 			if draw_background:
@@ -180,12 +207,14 @@ func _draw() -> void:
 	# In the editor: draw cell grid lines and a bright outer border so you can
 	# see exactly which TileMapLayer cells to paint.
 	if Engine.is_editor_hint():
-		var gw := grid_width  * TILE_SIZE.x
-		var gh := grid_height * TILE_SIZE.y
+		var ox := float(_origin.x * TILE_SIZE.x)
+		var oy := float(_origin.y * TILE_SIZE.y)
+		var gw := float(grid_width  * TILE_SIZE.x)
+		var gh := float(grid_height * TILE_SIZE.y)
 		for y in range(grid_height + 1):
-			var yf := float(y * TILE_SIZE.y)
-			draw_line(Vector2(0, yf), Vector2(gw, yf), Color(1, 1, 1, 0.25), 1.0)
+			var yf := oy + float(y * TILE_SIZE.y)
+			draw_line(Vector2(ox, yf), Vector2(ox + gw, yf), Color(1, 1, 1, 0.25), 1.0)
 		for x in range(grid_width + 1):
-			var xf := float(x * TILE_SIZE.x)
-			draw_line(Vector2(xf, 0), Vector2(xf, gh), Color(1, 1, 1, 0.25), 1.0)
-		draw_rect(Rect2(0, 0, gw, gh), Color(1, 1, 0, 0.9), false, 2.0)
+			var xf := ox + float(x * TILE_SIZE.x)
+			draw_line(Vector2(xf, oy), Vector2(xf, oy + gh), Color(1, 1, 1, 0.25), 1.0)
+		draw_rect(Rect2(ox, oy, gw, gh), Color(1, 1, 0, 0.9), false, 2.0)

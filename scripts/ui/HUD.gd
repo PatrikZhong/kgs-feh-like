@@ -2,12 +2,12 @@ extends CanvasLayer
 
 signal threat_toggled(on: bool)
 
-@onready var turn_label: Label         = $Panel/VBox/TurnLabel
-@onready var end_turn_btn: Button      = $Panel/VBox/EndTurnButton
-@onready var result_panel: Panel       = $ResultPanel
-@onready var result_label: Label       = $ResultPanel/VBox/ResultLabel
-@onready var continue_btn: Button      = $ResultPanel/VBox/ContinueButton
-@onready var threat_toggle_btn: Button = $ThreatToggleButton
+@onready var turn_label: Label         = %TurnLabel
+@onready var end_turn_btn: Button      = %EndTurnButton
+@onready var result_panel: Panel       = %ResultPanel
+@onready var result_label: Label       = %ResultLabel
+@onready var continue_btn: Button      = %ContinueButton
+@onready var threat_toggle_btn: Button = %ThreatToggleButton
 
 var _threat_on: bool = true
 
