@@ -1,19 +1,51 @@
-[gd_scene load_steps=2 format=3 uid="uid://b32ceypa40ok4"]
+[gd_scene load_steps=4 format=3 uid="uid://b32ceypa40ok4"]
 
 [ext_resource type="Script" uid="uid://brmj12gonkqi8" path="res://scripts/overworld/Overworld.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/overworld/OverworldNode.tscn" id="2_ownode"]
+[ext_resource type="Texture2D" uid="uid://b4g4sf1s86qq7" path="res://assets/sprites/TilesetGrass/TilesetGrass/preview.png" id="2_sc77d"]
 
 [node name="Overworld" type="Node2D"]
 script = ExtResource("1")
+edges = [[0, 1], [1, 2], [2, 3]]
 
 [node name="Background" type="ColorRect" parent="."]
-z_index = -1
-offset_right = 1280.0
-offset_bottom = 720.0
+z_index = -2
+offset_right = 1169.0
+offset_bottom = 846.0
 color = Color(0.08, 0.12, 0.18, 1)
+
+[node name="MapSprite" type="Sprite2D" parent="."]
+z_index = -1
+position = Vector2(595.56244, 421.24997)
+scale = Vector2(1.9741012, 1.7911258)
+texture = ExtResource("2_sc77d")
 
 [node name="EdgesContainer" type="Node2D" parent="."]
 
 [node name="NodesContainer" type="Node2D" parent="."]
+
+[node name="Node_0" parent="NodesContainer" instance=ExtResource("2_ownode")]
+position = Vector2(274, 506)
+node_label = "Tutorial"
+battle_scene = "res://scenes/battle/battles/Battle_0.tscn"
+
+[node name="Node_1" parent="NodesContainer" instance=ExtResource("2_ownode")]
+position = Vector2(532, 705)
+node_id = 1
+node_label = "Forest Path"
+battle_scene = "res://scenes/battle/battles/Battle_1.tscn"
+
+[node name="Node_2" parent="NodesContainer" instance=ExtResource("2_ownode")]
+position = Vector2(835, 709)
+node_id = 2
+node_label = "River Ford"
+battle_scene = "res://scenes/battle/battles/Battle_2.tscn"
+
+[node name="Node_3" parent="NodesContainer" instance=ExtResource("2_ownode")]
+position = Vector2(768, 158)
+node_id = 3
+node_label = "Hell"
+battle_scene = "res://scenes/battle/battles/Battle_2.tscn"
 
 [node name="TitleLabel" type="Label" parent="."]
 offset_left = 13.0

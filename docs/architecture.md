@@ -36,9 +36,10 @@ CombatResolver scripts/battle/CombatResolver.gd — damage math
 SaveData       scripts/data/SaveData.gd         — persistent run state
 ```
 
-**Important:** Autoloads compile before the global class registry is fully
-populated, so their function parameters must be untyped (`var x` not
-`var x: Unit`). Local variables inside those functions can still be typed.
+**Typing in autoloads:** Autoload scripts use `const _Unit := preload("res://scripts/battle/Unit.gd")`
+and `const _BattleMap := preload("res://scripts/battle/BattleMap.gd")` to resolve
+types without relying on the global class registry. Function parameters are typed
+against these preload aliases (e.g. `func resolve(attacker: _Unit, defender: _Unit)`).
 
 ## Coordinate System
 
@@ -291,9 +292,30 @@ Available methods:
 | `clear()`                           | Clear move + attack; leave threat intact        |
 | `clear_all()`                       | Clear move + attack + threat                    |
 
+## BattleMap: Unit Position Cache
+
+`BattleMap` maintains `_unit_by_cell: Dictionary` (Vector2i → Unit) for O(1)
+cell lookups. All code paths that change a unit's cell must keep it in sync:
+
+| Code path                | Action                                    |
+|--------------------------|-------------------------------------------|
+| `_spawn()`               | `_unit_by_cell[cell] = unit`              |
+| `_commit_move()`         | erase old cell, insert new cell           |
+| `_commit_placement_move()` | erase old cell, insert new cell         |
+| `move_unit_instant()`    | erase old cell, snap, insert new cell     |
+| `_on_unit_died()`        | `_unit_by_cell.erase(unit.grid_cell)`     |
+
+`get_unit_at(cell) → Unit` reads directly from this dict (single lookup, no loop).
+
+`move_unit_instant(unit, cell)` is the shared primitive for all non-tweened
+moves. EnemyAI calls this instead of touching `snap_to_cell` + `set_cell_solid`
+directly. BattleMap also exposes `perform_combat()` as public for EnemyAI.
+
 ## Key Invariants
 
 - A cell is "solid" in AStarGrid2D whenever a unit occupies it.
+- `_unit_by_cell` and A* solidity are always updated together via `move_unit_instant`
+  or the `_commit_*` helpers — never update one without the other.
 - BFS (reachability) and A* (pathfinding) are separate systems; BFS ignores
   A* solid state and uses its own `_solid_cells` dict + tile type check.
 - Enemy cells are **not** passed to `get_reachable_cells` as blocked — they

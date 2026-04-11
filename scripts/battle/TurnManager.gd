@@ -22,14 +22,14 @@ func start_battle(map) -> void:
 	battle_map = map
 	turn_count = 1
 	current_state = State.PLACEMENT
-	emit_signal("turn_changed", current_state)
+	turn_changed.emit(current_state)
 
 ## Called by HUD "Begin Battle" button to leave the placement phase.
 func start_combat() -> void:
 	if current_state != State.PLACEMENT:
 		return
 	current_state = State.PLAYER_TURN
-	emit_signal("turn_changed", current_state)
+	turn_changed.emit(current_state)
 
 ## Called by BattleMap after a player unit moves, or by HUD End Turn button.
 func end_player_turn() -> void:
@@ -38,7 +38,7 @@ func end_player_turn() -> void:
 	if _is_battle_over():
 		return
 	current_state = State.ENEMY_TURN
-	emit_signal("turn_changed", current_state)
+	turn_changed.emit(current_state)
 	if _any_enemy_unmoved():
 		EnemyAI.execute_turn()
 	else:
@@ -55,15 +55,15 @@ func end_enemy_turn() -> void:
 		EnemyAI.execute_turn()
 	else:
 		current_state = State.PLAYER_TURN
-		emit_signal("turn_changed", current_state)
+		turn_changed.emit(current_state)
 
 func check_end_conditions() -> void:
 	if not battle_map:
 		return
 	if battle_map.enemy_units.is_empty():
-		emit_signal("battle_won")
+		battle_won.emit()
 	elif battle_map.player_units.is_empty():
-		emit_signal("battle_lost")
+		battle_lost.emit()
 
 # ---------------------------------------------------------------------------
 # Internal
@@ -75,8 +75,8 @@ func _new_round() -> void:
 		if is_instance_valid(unit):
 			unit.reset_turn()
 	current_state = State.PLAYER_TURN
-	emit_signal("turn_changed", current_state)
-	emit_signal("new_round", turn_count)
+	turn_changed.emit(current_state)
+	new_round.emit(turn_count)
 
 func _is_battle_over() -> bool:
 	return not battle_map \

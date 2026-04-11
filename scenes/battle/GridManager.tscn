@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=2 format=3 uid="uid://i8dbiup76coh"]
 
-[ext_resource type="Script" path="res://scripts/battle/GridManager.gd" id="1"]
+[ext_resource type="Script" uid="uid://qjodkf7m3dd3" path="res://scripts/battle/GridManager.gd" id="1"]
 
 [node name="GridManager" type="Node2D"]
+texture_filter = 1
 script = ExtResource("1")

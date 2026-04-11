@@ -1,31 +1,36 @@
-[gd_scene load_steps=2 format=3 uid="uid://cvhgd1n1k3xqo"]
+[gd_scene load_steps=3 format=4 uid="uid://cvhgd1n1k3xqo"]
 
 [ext_resource type="PackedScene" uid="uid://nw1x1nxxma3n" path="res://scenes/battle/BattleMap.tscn" id="1_battle"]
+[ext_resource type="TileSet" uid="uid://bjtgfkrmhvxt2" path="res://resources/maps/GrassTileSet.tres" id="2_tileset"]
 
 [node name="Battle_1" instance=ExtResource("1_battle")]
 
-[node name="Camera2D" parent="." index="0"]
-script = null
+[node name="TileMapLayer" parent="." index="1"]
+scale = Vector2(2.5, 2.5)
+tile_map_data = PackedByteArray("AAAAAAAAAQAJAAUAAAAAAAEAAQAJAAUAAAAAAAIAAQAJAAUAAAAAAAMAAQAJAAUAAAAAAAQAAQAJAAUAAAAAAAUAAQAJAAUAAAAAAAYAAQAJAAUAAAAAAAcAAQAJAAUAAAABAAAAAQAJAAUAAAABAAEAAQAJAAUAAAABAAIAAQAJAAUAAAABAAMAAQAJAAUAAAABAAQAAQAJAAUAAAABAAUAAQAJAAUAAAABAAYAAQAJAAUAAAABAAcAAQAJAAUAAAACAAAAAQAJAAUAAAACAAEAAQAJAAUAAAACAAIAAQAJAAUAAAACAAMAAQAJAAUAAAACAAQAAQAJAAUAAAACAAUAAQAJAAUAAAACAAYAAQAJAAUAAAACAAcAAQAJAAUAAAADAAAAAQAJAAUAAAADAAEAAQAJAAUAAAADAAIAAQAJAAUAAAADAAMAAQAJAAUAAAADAAQAAQAJAAUAAAADAAUAAQAJAAUAAAADAAYAAQAJAAUAAAADAAcAAQAJAAUAAAAEAAAAAQAJAAUAAAAEAAEAAQAJAAUAAAAEAAIAAQAJAAUAAAAEAAMAAQAJAAUAAAAEAAQAAQAJAAUAAAAEAAUAAQAJAAUAAAAEAAYAAQAJAAUAAAAEAAcAAQAJAAUAAAAFAAAAAQAJAAUAAAAFAAEAAQAJAAUAAAAFAAIAAQAJAAUAAAAFAAMAAQAJAAUAAAAFAAQAAQAJAAUAAAAFAAUAAQAJAAUAAAAFAAYAAQAJAAUAAAAFAAcAAQAJAAUAAAAGAAAAAQAJAAUAAAAGAAEAAQAJAAUAAAAGAAIAAQAJAAUAAAAGAAMAAQAJAAUAAAAGAAQAAQAJAAUAAAAGAAUAAQAJAAUAAAAGAAYAAQAJAAUAAAAGAAcAAQAJAAUAAAAHAAAAAQAJAAUAAAAHAAEAAQAJAAUAAAAHAAIAAQAJAAUAAAAHAAMAAQAJAAUAAAAHAAQAAQAJAAUAAAAHAAUAAQAJAAUAAAAHAAYAAQAJAAUAAAAHAAcAAQAJAAUAAAA=")
+tile_set = ExtResource("2_tileset")
 
 [node name="GridManager" parent="." index="2"]
 texture_filter = 1
+draw_background = false
 
-[node name="BottomBar" parent="HUD" index="0"]
-anchors_preset = 12
-offset_top = -72.0
-grow_horizontal = 2
-grow_vertical = 0
+[node name="PlacementZoneLayer" parent="." index="6"]
+scale = Vector2(2.5, 2.5)
+tile_map_data = PackedByteArray("AAAAAAAAAQAGAAIAAAABAAAAAQAGAAIAAAABAAEAAQAGAAIAAAABAAIAAQAGAAIAAAABAAMAAQAGAAIAAAABAAQAAQAGAAIAAAABAAUAAQAGAAIAAAABAAYAAQAGAAIAAAABAAcAAQAGAAIAAAAAAAcAAQAGAAIAAAAAAAYAAQAGAAIAAAAAAAUAAQAGAAIAAAAAAAQAAQAGAAIAAAAAAAMAAQAGAAIAAAAAAAIAAQAGAAIAAAAAAAEAAQAGAAIAAAA=")
+tile_set = ExtResource("2_tileset")
 
-[node name="HBox" parent="HUD/BottomBar" index="0"]
-anchors_preset = 15
-offset_left = 0.0
-offset_top = 0.0
-offset_right = 0.0
-offset_bottom = 0.0
-grow_horizontal = 2
-grow_vertical = 2
+[node name="EnemySpawnLayer" parent="."]
+scale = Vector2(2.5, 2.5)
+tile_set = ExtResource("2_tileset")
 
-[node name="ResultPanel" parent="HUD" index="1"]
-anchors_preset = 8
-grow_horizontal = 2
-grow_vertical = 2
+[node name="CollisionLayer" parent="."]
+scale = Vector2(2.5, 2.5)
+tile_set = ExtResource("2_tileset")
+
+[node name="HighGroundLayer" parent="."]
+scale = Vector2(2.5, 2.5)
+tile_set = ExtResource("2_tileset")
+
+[node name="DangerousLayer" parent="."]
+scale = Vector2(2.5, 2.5)
+tile_set = ExtResource("2_tileset")

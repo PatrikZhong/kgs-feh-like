@@ -4,11 +4,28 @@ extends Node2D
 
 enum TileType { NORMAL, HIGH_GROUND, DANGEROUS, BLOCKED }
 
+## Registry: TileMapLayer node name → TileType it encodes.
+## To add a new tile type:
+##   1. Add a value to the TileType enum above.
+##   2. Add one entry here.
+##   3. Add the TileMapLayer node to BattleMap.tscn + each Battle_*.tscn override.
+##   4. Implement the gameplay effect wherever it matters (combat, movement, end-of-turn, etc.).
+const TILE_TYPE_LAYERS: Dictionary = {
+	"CollisionLayer": TileType.BLOCKED,
+	"HighGroundLayer": TileType.HIGH_GROUND,
+	"DangerousLayer":  TileType.DANGEROUS,
+}
+
 const TILE_SIZE := Vector2i(40, 40)
 @export var grid_width: int = 8
 @export var grid_height: int = 8
 ## Set false once you have a TileMapLayer painting the background.
 @export var draw_background: bool = true
+
+## Placement zone dimensions for pre-battle phase (columns × rows from origin 0,0).
+## Players can only drag-drop units within this zone during PLACEMENT state.
+@export var placement_zone_cols: int = 2
+@export var placement_zone_rows: int = 3
 
 ## Stores overridden tile types (cells not listed are NORMAL).
 var _tile_types: Dictionary = {}
@@ -29,8 +46,16 @@ func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	if not Engine.is_editor_hint():
 		_bg_tile = _slice_tile(SaveData.current_battle_id)
+		# Hide placement/spawn layers — pure level-design aids, not visual game elements.
+		for layer_name in ["PlacementZoneLayer", "EnemySpawnLayer"]:
+			var layer := get_parent().get_node_or_null(layer_name) as TileMapLayer
+			if layer:
+				layer.visible = false
+		# Tile-type layers (CollisionLayer, HighGroundLayer, DangerousLayer) stay visible;
+		# their modulate colour is the in-game visual indicator for each tile type.
 	_read_dimensions_from_tilemap()
 	_setup_astar()
+	_read_tile_type_layers()
 	queue_redraw()
 
 ## Reads grid dimensions and origin from the sibling TileMapLayer's painted area.
@@ -68,7 +93,28 @@ func _setup_astar() -> void:
 	_astar.region = Rect2i(0, 0, grid_width, grid_height)
 	_astar.cell_size = Vector2(TILE_SIZE)
 	_astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_NEVER
+	# Manhattan is the correct heuristic for orthogonal-only grids.
+	# Euclidean (the default) underestimates costs here and produces suboptimal paths.
+	_astar.default_estimate_heuristic = AStarGrid2D.HEURISTIC_MANHATTAN
 	_astar.update()
+
+## Reads all TILE_TYPE_LAYERS and populates _tile_types + A* solidity.
+## Must be called after _setup_astar(). Adding a new tile type only requires
+## a new entry in TILE_TYPE_LAYERS — no changes needed here.
+func _read_tile_type_layers() -> void:
+	for layer_name in TILE_TYPE_LAYERS:
+		var layer := get_parent().get_node_or_null(layer_name) as TileMapLayer
+		if layer == null:
+			continue
+		var tile_type: TileType = TILE_TYPE_LAYERS[layer_name]
+		for world_cell in layer.get_used_cells():
+			var grid_cell := tilemap_to_grid(world_cell)
+			if not is_in_bounds(grid_cell):
+				push_warning(
+					"GridManager: %s cell %s → grid %s is out of bounds (grid %dx%d, origin %s). Check that this layer uses the same TileSet and scale as TileMapLayer." \
+					% [layer_name, world_cell, grid_cell, grid_width, grid_height, _origin])
+				continue
+			set_tile_type(grid_cell, tile_type)
 
 # ---------------------------------------------------------------------------
 # Coordinate helpers
@@ -85,6 +131,11 @@ func world_to_grid(world_pos: Vector2) -> Vector2i:
 func is_in_bounds(cell: Vector2i) -> bool:
 	return cell.x >= 0 and cell.x < grid_width and cell.y >= 0 and cell.y < grid_height
 
+## Converts a TileMapLayer cell coordinate (as returned by get_used_cells()) to
+## a grid-local coordinate. Use this whenever reading cells from any sibling layer.
+func tilemap_to_grid(tilemap_cell: Vector2i) -> Vector2i:
+	return tilemap_cell - _origin
+
 ## Returns all grid cells that have a painted tile (grid-local 0-based coords).
 ## Falls back to the full grid if no TileMapLayer is present.
 func get_valid_cells() -> Array[Vector2i]:
@@ -99,6 +150,24 @@ func get_valid_cells() -> Array[Vector2i]:
 	for world_cell in tml.get_used_cells():
 		result.append(world_cell - _origin)
 	return result
+
+## Returns valid cells within the placement zone.
+## If a PlacementZoneLayer sibling has painted tiles, those cells define the zone.
+## Otherwise falls back to the leftmost placement_zone_cols × placement_zone_rows rectangle.
+func get_placement_zone_cells() -> Array[Vector2i]:
+	var zone_layer := get_parent().get_node_or_null("PlacementZoneLayer") as TileMapLayer
+	if zone_layer != null and zone_layer.get_used_cells().size() > 0:
+		var zone: Array[Vector2i] = []
+		for world_cell in zone_layer.get_used_cells():
+			zone.append(world_cell - _origin)
+		return zone
+	# Fallback: rectangle from the top-left corner of the grid.
+	var valid: Array[Vector2i] = get_valid_cells()
+	var zone: Array[Vector2i] = []
+	for cell in valid:
+		if cell.x >= 0 and cell.x < placement_zone_cols and cell.y >= 0 and cell.y < placement_zone_rows:
+			zone.append(cell)
+	return zone
 
 # ---------------------------------------------------------------------------
 # Tile type helpers
@@ -192,7 +261,54 @@ func grid_world_center() -> Vector2:
 func get_astar_path(from: Vector2i, to: Vector2i) -> Array[Vector2i]:
 	if not is_in_bounds(from) or not is_in_bounds(to):
 		return []
-	return _astar.get_id_path(from, to)
+	# allow_partial_path=true: if destination is unreachable, returns path to the
+	# closest reachable cell. Prevents enemies from freezing when their target is
+	# surrounded by other units.
+	return _astar.get_id_path(from, to, true)
+
+## Returns the shortest path from `start` to `goal` using BFS.
+## Applies the same blocking rules as get_reachable_cells:
+##   - BLOCKED terrain cells are impassable.
+##   - `blocked_cells` (ally positions) block passage unless can_jump_allies is true.
+##   - The goal cell is never treated as blocked (allows stepping onto it).
+## Returns [start] if goal is unreachable.
+func get_shortest_path(
+		start: Vector2i,
+		goal: Vector2i,
+		can_jump_allies: bool,
+		blocked_cells: Array) -> Array[Vector2i]:
+
+	if start == goal:
+		return [start]
+
+	var came_from: Dictionary = {}
+	came_from[start] = Vector2i(-1, -1)
+	var queue: Array[Vector2i] = [start]
+
+	while queue.size() > 0:
+		var current: Vector2i = queue.pop_front()
+		if current == goal:
+			break
+		for neighbor in _get_neighbors(current):
+			if came_from.has(neighbor):
+				continue
+			if get_tile_type(neighbor) == TileType.BLOCKED:
+				continue
+			if not can_jump_allies and neighbor in blocked_cells and neighbor != goal:
+				continue
+			came_from[neighbor] = current
+			queue.append(neighbor)
+
+	if not came_from.has(goal):
+		return [start]
+
+	var path: Array[Vector2i] = []
+	var cur := goal
+	while cur != start:
+		path.push_front(cur)
+		cur = came_from[cur]
+	path.push_front(start)
+	return path
 
 # ---------------------------------------------------------------------------
 # Visual (drawn without a TileSet for the prototype)
@@ -217,7 +333,6 @@ func _draw() -> void:
 			match get_tile_type(cell):
 				TileType.HIGH_GROUND: draw_rect(rect, Color(0.55, 0.45, 0.10, 0.50), true)
 				TileType.DANGEROUS:   draw_rect(rect, Color(0.60, 0.15, 0.15, 0.50), true)
-				TileType.BLOCKED:     draw_rect(rect, Color(0.10, 0.10, 0.10, 0.70), true)
 
 	# In the editor: draw cell grid lines and a bright outer border so you can
 	# see exactly which TileMapLayer cells to paint.

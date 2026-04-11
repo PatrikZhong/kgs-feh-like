@@ -9,17 +9,14 @@ const ARCHER_DATA      := preload("res://resources/units/ArcherData.tres")
 const MAGE_DATA        := preload("res://resources/units/MageData.tres")
 const ARMORED_ORC_DATA := preload("res://resources/units/ArmoredOrcData.tres")
 
-## Enemy spawn positions per battle node (wraps if more nodes than entries).
-const BATTLE_ENEMY_SPAWNS: Array = [
-	[Vector2i(6, 2), Vector2i(6, 4), Vector2i(6, 6)],  # node 0 — Tutorial
-	[Vector2i(7, 1), Vector2i(5, 3), Vector2i(7, 6)],  # node 1 — Forest Path
-	[Vector2i(7, 0), Vector2i(6, 4), Vector2i(7, 7)],  # node 2 — River Ford
-]
 
 ## All units on the map.
 var units: Array[Unit] = []
 var player_units: Array[Unit] = []
 var enemy_units: Array[Unit] = []
+
+## O(1) cell → unit lookup. Kept in sync by all code paths that move or remove units.
+var _unit_by_cell: Dictionary = {}
 
 # Drag state
 var _dragged_unit: Unit = null
@@ -74,12 +71,13 @@ func _fit_camera() -> void:
 # ---------------------------------------------------------------------------
 
 ## Spawns all units for the placement phase.
-## Player units occupy the leftmost valid cells; enemies are placed randomly
+## Player units occupy cells within the placement zone; enemies are placed randomly
 ## on the remaining valid cells.
 func _begin_placement() -> void:
 	var valid_cells: Array[Vector2i] = grid_mgr.get_valid_cells()
+	var placement_zone: Array[Vector2i] = grid_mgr.get_placement_zone_cells()
 	# Sort left-to-right so the player roster defaults to the left side.
-	valid_cells.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return a.x < b.x)
+	placement_zone.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return a.x < b.x)
 
 	var taken: Dictionary = {}
 
@@ -94,28 +92,35 @@ func _begin_placement() -> void:
 	else:
 		player_roster = [KNIGHT_DATA, ARCHER_DATA, MAGE_DATA]
 
-	# Place player units on the leftmost valid cells.
+	# Place player units within the placement zone.
 	var pi: int = 0
-	for cell in valid_cells:
+	for cell in placement_zone:
 		if pi >= player_roster.size():
 			break
 		_spawn(player_roster[pi], cell, true)
 		taken[cell] = true
 		pi += 1
 
-	# Build pool for enemies from all remaining cells, then shuffle.
-	var enemy_pool: Array[Vector2i] = []
-	for cell in valid_cells:
-		if not taken.has(cell):
-			enemy_pool.append(cell)
-	enemy_pool.shuffle()
-
-	# Place enemies.
+	# Place enemies — use EnemySpawnLayer cells if painted, else random valid cells.
 	var enemy_roster: Array = [ARMORED_ORC_DATA, ARMORED_ORC_DATA, ARMORED_ORC_DATA]
+	var spawn_layer := get_node_or_null("EnemySpawnLayer") as TileMapLayer
+	var enemy_cells: Array[Vector2i] = []
+
+	if spawn_layer and spawn_layer.get_used_cells().size() > 0:
+		for world_cell in spawn_layer.get_used_cells():
+			enemy_cells.append(grid_mgr.tilemap_to_grid(world_cell))
+	else:
+		var pool: Array[Vector2i] = []
+		for cell in valid_cells:
+			if not taken.has(cell):
+				pool.append(cell)
+		pool.shuffle()
+		enemy_cells = pool
+
 	for i in range(enemy_roster.size()):
-		if i >= enemy_pool.size():
+		if i >= enemy_cells.size():
 			break
-		_spawn(enemy_roster[i], enemy_pool[i], false)
+		_spawn(enemy_roster[i], enemy_cells[i], false)
 
 func _spawn(data: UnitData, cell: Vector2i, is_player: bool) -> Unit:
 	var unit: Unit = UNIT_SCENE.instantiate()
@@ -124,6 +129,7 @@ func _spawn(data: UnitData, cell: Vector2i, is_player: bool) -> Unit:
 	units_layer.add_child(unit)
 	unit.snap_to_cell(cell, grid_mgr)
 	grid_mgr.set_cell_solid(cell, true)
+	_unit_by_cell[cell] = unit
 	units.append(unit)
 	if is_player:
 		player_units.append(unit)
@@ -157,14 +163,19 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion and _dragged_unit:
 		var hovered := grid_mgr.world_to_grid(get_global_mouse_position())
 
-		# Track last valid blue (movement) tile and build bending path.
+		# Track last valid blue (movement) tile and compute shortest path to it.
 		if hovered in _reachable_cells and hovered not in _extended_attack_cells:
 			_last_hovered_move_cell = hovered
-			var idx := _arrow_path.find(hovered)
-			if idx >= 0:
-				_arrow_path = _arrow_path.slice(0, idx + 1)
-			else:
-				_arrow_path.append(hovered)
+			var ally_cells: Array = []
+			for u in player_units:
+				if u != _dragged_unit:
+					ally_cells.append(u.grid_cell)
+			var new_path := grid_mgr.get_shortest_path(
+				_original_cell, hovered,
+				_dragged_unit.data.can_jump_allies, ally_cells)
+			# Reject paths longer than the unit's move range (path includes start cell).
+			if new_path.size() - 1 <= _dragged_unit.data.move_range:
+				_arrow_path = new_path
 
 		# Track whether cursor is over an attackable enemy.
 		if hovered in _extended_attack_cells:
@@ -206,13 +217,13 @@ func _begin_drag(world_pos: Vector2) -> void:
 	_arrow_path = [unit.grid_cell]
 
 	if is_placement:
-		# Highlight every valid tile that isn't blocked by another unit.
+		# Highlight valid tiles within placement zone that aren't blocked by another unit.
 		var all_occupied: Array[Vector2i] = []
 		for u in units:
 			if u != unit:
 				all_occupied.append(u.grid_cell)
 		var placement_cells: Array[Vector2i] = []
-		for c in grid_mgr.get_valid_cells():
+		for c in grid_mgr.get_placement_zone_cells():
 			if c not in all_occupied:
 				placement_cells.append(c)
 		_reachable_cells = placement_cells
@@ -313,7 +324,7 @@ func _end_drag(world_pos: Vector2) -> void:
 
 	# — Drop on a movement tile: just move —
 	elif drop_cell in _reachable_cells and drop_cell != _original_cell and cell_free:
-		_commit_move(unit, drop_cell)
+		_commit_move(unit, drop_cell, _arrow_path)
 		TurnManager.end_player_turn()
 
 	# — Drop on an attack tile with an enemy: move to best position and attack —
@@ -321,7 +332,14 @@ func _end_drag(world_pos: Vector2) -> void:
 		var target := get_unit_at(drop_cell)
 		if target and not target.is_player_unit:
 			var best_cell := _pick_attacker_cell(drop_cell, unit)
-			_commit_move(unit, best_cell)
+			var ally_cells: Array = []
+			for u in player_units:
+				if u != unit:
+					ally_cells.append(u.grid_cell)
+			var move_path := grid_mgr.get_shortest_path(
+				_original_cell, best_cell,
+				unit.data.can_jump_allies, ally_cells)
+			_commit_move(unit, best_cell, move_path)
 			perform_combat(unit, target)
 			TurnManager.end_player_turn()
 		else:
@@ -381,22 +399,39 @@ func _update_drag_arrow() -> void:
 		if _attack_arrowhead:
 			_attack_arrowhead.polygon = PackedVector2Array()
 
-func _commit_move(unit: Unit, cell: Vector2i) -> void:
-	grid_mgr.set_cell_solid(_original_cell, false)
+## Moves a unit instantly to a cell (no animation). Updates the position cache
+## and grid solidity. Used by EnemyAI; also the underlying primitive for all moves.
+func move_unit_instant(unit: Unit, cell: Vector2i) -> void:
+	_unit_by_cell.erase(unit.grid_cell)
+	grid_mgr.set_cell_solid(unit.grid_cell, false)
+	unit.snap_to_cell(cell, grid_mgr)
+	grid_mgr.set_cell_solid(cell, true)
+	_unit_by_cell[cell] = unit
+
+func _commit_move(unit: Unit, cell: Vector2i, path: Array[Vector2i] = []) -> void:
+	_unit_by_cell.erase(unit.grid_cell)
+	grid_mgr.set_cell_solid(unit.grid_cell, false)
 	grid_mgr.set_cell_solid(cell, true)
 	unit.grid_cell = cell
+	_unit_by_cell[cell] = unit
 	var faction := "Player" if unit.is_player_unit else "Enemy"
 	print("[%s %s] moved to %s" % [faction, unit.data.class_label(), str(cell)])
 	var tween := create_tween()
-	tween.tween_property(unit, "position", grid_mgr.grid_to_world(cell), 0.10)
+	if path.size() > 1:
+		for i in range(1, path.size()):
+			tween.tween_property(unit, "position", grid_mgr.grid_to_world(path[i]), 0.07)
+	else:
+		tween.tween_property(unit, "position", grid_mgr.grid_to_world(cell), 0.10)
 	unit.set_moved()
 
 ## Repositions a unit during the placement phase (no turn cost, no set_moved).
 func _commit_placement_move(unit: Unit, cell: Vector2i) -> void:
-	grid_mgr.set_cell_solid(_original_cell, false)
+	_unit_by_cell.erase(unit.grid_cell)
+	grid_mgr.set_cell_solid(unit.grid_cell, false)
 	grid_mgr.set_cell_solid(cell, true)
 	unit.grid_cell = cell
 	unit.position = grid_mgr.grid_to_world(cell)
+	_unit_by_cell[cell] = unit
 
 # ---------------------------------------------------------------------------
 # Attack helpers
@@ -480,16 +515,14 @@ func perform_combat(attacker: Unit, defender: Unit) -> void:
 # ---------------------------------------------------------------------------
 
 func get_unit_at(cell: Vector2i) -> Unit:
-	for unit in units:
-		if is_instance_valid(unit) and unit.grid_cell == cell:
-			return unit
-	return null
+	return _unit_by_cell.get(cell) as Unit
 
 # ---------------------------------------------------------------------------
 # Unit death
 # ---------------------------------------------------------------------------
 
 func _on_unit_died(unit: Unit) -> void:
+	_unit_by_cell.erase(unit.grid_cell)
 	units.erase(unit)
 	player_units.erase(unit)
 	enemy_units.erase(unit)

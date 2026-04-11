@@ -1,9 +1,10 @@
 ## Autoload: CombatResolver
 ## Resolves combat between two units (attacker hits, then defender counter-attacks).
-## Parameters are untyped to avoid class-name resolution issues in autoloads.
 extends Node
 
-func resolve(attacker, defender) -> void:
+const _Unit := preload("res://scripts/battle/Unit.gd")
+
+func resolve(attacker: _Unit, defender: _Unit) -> void:
 	var atk_faction := "Player" if attacker.is_player_unit else "Enemy"
 	var def_faction := "Player" if defender.is_player_unit else "Enemy"
 

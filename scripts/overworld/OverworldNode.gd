@@ -4,35 +4,31 @@ extends Node2D
 signal node_clicked(id: int, scene_path: String)
 
 const RADIUS := 28.0
-const LOCKED_COLOR  := Color(0.40, 0.40, 0.40)
+const LOCKED_COLOR   := Color(0.40, 0.40, 0.40)
 const UNLOCKED_COLOR := Color(0.90, 0.75, 0.20)
 
-var _id: int = 0
-var _label: String = ""
-var _scene_path: String = ""
+## Set these in the Godot editor — place the node visually, then fill the inspector.
+@export var node_id: int = 0
+@export var node_label: String = ""
+@export var battle_scene: String = ""
+
 var _unlocked: bool = false
 
 @onready var _button: Button = $Button
 @onready var _label_node: Label = $Label
 
-func setup(id: int, label: String, scene_path: String, unlocked: bool) -> void:
-	_id = id
-	_label = label
-	_scene_path = scene_path
-	_unlocked = unlocked
+func _ready() -> void:
+	_unlocked = SaveData.is_node_unlocked(node_id)
 	if _label_node:
-		_label_node.text = label
+		_label_node.text = node_label
 	if _button:
-		_button.disabled = not unlocked
-	modulate = Color.WHITE if unlocked else Color(0.55, 0.55, 0.55)
+		_button.disabled = not _unlocked
+		_button.pressed.connect(_on_pressed)
+	modulate = Color.WHITE if _unlocked else Color(0.55, 0.55, 0.55)
 	queue_redraw()
 
-func _ready() -> void:
-	if _button:
-		_button.pressed.connect(_on_pressed)
-
 func _on_pressed() -> void:
-	emit_signal("node_clicked", _id, _scene_path)
+	emit_signal("node_clicked", node_id, battle_scene)
 
 func _draw() -> void:
 	var color := UNLOCKED_COLOR if _unlocked else LOCKED_COLOR

@@ -123,7 +123,7 @@ func take_damage(amount: int) -> void:
 	current_hp = maxi(0, current_hp)
 	queue_redraw()
 	if current_hp <= 0:
-		emit_signal("died", self)
+		died.emit(self)
 
 func snap_to_cell(cell: Vector2i, grid_manager: GridManager) -> void:
 	grid_cell = cell

@@ -1,19 +1,21 @@
 ## Autoload: EnemyAI
 ## Simple greedy AI: each enemy moves toward the nearest player unit and attacks.
-## Parameters are untyped to avoid class-name resolution issues in autoloads.
 extends Node
+
+const _Unit := preload("res://scripts/battle/Unit.gd")
+const _BattleMap := preload("res://scripts/battle/BattleMap.gd")
 
 const ACTION_DELAY := 0.35  # seconds before the enemy acts so the player can follow
 
 func execute_turn() -> void:
-	var map = TurnManager.battle_map
+	var map: _BattleMap = TurnManager.battle_map
 	if not map or map.enemy_units.is_empty():
 		TurnManager.end_enemy_turn()
 		return
 
 	# Find the first enemy that hasn't moved this round
-	var enemy = null
-	for e in map.enemy_units:
+	var enemy: _Unit = null
+	for e: _Unit in map.enemy_units:
 		if is_instance_valid(e) and not e.has_moved:
 			enemy = e
 			break
@@ -38,11 +40,11 @@ func execute_turn() -> void:
 # Internal
 # ---------------------------------------------------------------------------
 
-func _act(enemy, map) -> void:
+func _act(enemy: _Unit, map: _BattleMap) -> void:
 	if map.player_units.is_empty():
 		return
 
-	var nearest = _find_nearest(enemy, map.player_units)
+	var nearest: _Unit = _find_nearest(enemy, map.player_units)
 	if not nearest:
 		return
 
@@ -54,10 +56,10 @@ func _act(enemy, map) -> void:
 		if dist <= enemy.data.attack_range:
 			map.perform_combat(enemy, nearest)
 
-func _find_nearest(enemy, player_units: Array):
-	var nearest = null
+func _find_nearest(enemy: _Unit, player_units: Array[_Unit]) -> _Unit:
+	var nearest: _Unit = null
 	var min_dist := INF
-	for pu in player_units:
+	for pu: _Unit in player_units:
 		if not is_instance_valid(pu):
 			continue
 		var d: int = _manhattan(enemy.grid_cell, pu.grid_cell)
@@ -66,8 +68,8 @@ func _find_nearest(enemy, player_units: Array):
 			nearest = pu
 	return nearest
 
-func _move_toward(enemy, target, map) -> void:
-	var grid_mgr = map.grid_mgr
+func _move_toward(enemy: _Unit, target: _Unit, map: _BattleMap) -> void:
+	var grid_mgr: GridManager = map.grid_mgr
 
 	# Temporarily unblock both the enemy's cell and the target's cell so
 	# AStarGrid2D can find a path (it refuses to path to a solid destination)
@@ -80,9 +82,9 @@ func _move_toward(enemy, target, map) -> void:
 	if path.is_empty():
 		return
 
-	# Move exactly one tile toward the target
+	# Walk up to the enemy's full move_range along the path, stopping if blocked.
 	var best_cell: Vector2i = enemy.grid_cell
-	var steps: int = mini(1, path.size() - 1)
+	var steps: int = mini(enemy.data.move_range, path.size() - 1)
 	for i in range(1, steps + 1):
 		var candidate: Vector2i = path[i]
 		if map.get_unit_at(candidate) != null:
@@ -92,9 +94,7 @@ func _move_toward(enemy, target, map) -> void:
 	if best_cell == enemy.grid_cell:
 		return
 
-	grid_mgr.set_cell_solid(enemy.grid_cell, false)
-	enemy.snap_to_cell(best_cell, grid_mgr)
-	grid_mgr.set_cell_solid(best_cell, true)
+	map.move_unit_instant(enemy, best_cell)
 	enemy.set_moved()
 	print("[Enemy %s] moved to %s" % [enemy.data.class_label(), str(best_cell)])
 

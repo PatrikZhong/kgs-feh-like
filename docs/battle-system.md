@@ -149,12 +149,24 @@ HUD.threat_toggle_btn pressed
 
 ## Movement Commit
 
+Two movement primitives exist depending on whether animation is needed:
+
 ```
-_commit_move(unit, cell)
+move_unit_instant(unit, cell)            ← used by EnemyAI, placement phase
   │
-  ├── grid_mgr.set_cell_solid(_original_cell, false)   ← free old cell
+  ├── _unit_by_cell.erase(unit.grid_cell)
+  ├── grid_mgr.set_cell_solid(unit.grid_cell, false)
+  ├── unit.snap_to_cell(cell, grid_mgr)  ← teleports instantly, sets unit.grid_cell
+  ├── grid_mgr.set_cell_solid(cell, true)
+  └── _unit_by_cell[cell] = unit
+
+_commit_move(unit, cell)                 ← used by player drag (tweened)
+  │
+  ├── _unit_by_cell.erase(unit.grid_cell)
+  ├── grid_mgr.set_cell_solid(unit.grid_cell, false)   ← free old cell
   ├── grid_mgr.set_cell_solid(cell, true)              ← claim new cell
   ├── unit.grid_cell = cell
+  ├── _unit_by_cell[cell] = unit
   ├── Tween: unit.position → grid_to_world(cell)  (0.10 s)
   └── unit.set_moved()   ← has_moved = true, sprite darkened (SPENT_DARKEN=0.45)
 ```
@@ -238,13 +250,14 @@ BattleMap.perform_combat(attacker, defender)
                    attacker.set_attacked()   ← has_attacked = true
 
 Unit death (signal handler in BattleMap._on_unit_died):
+  ├── _unit_by_cell.erase(unit.grid_cell)
   ├── units / player_units / enemy_units  .erase(unit)
   ├── grid_mgr.set_cell_solid(unit.grid_cell, false)
   ├── unit.queue_free()
   ├── if enemy died: _refresh_enemy_threat()
   └── TurnManager.check_end_conditions()
-            └── enemy_units empty → emit "battle_won"
-                player_units empty → emit "battle_lost"
+            └── enemy_units empty → battle_won.emit()
+                player_units empty → battle_lost.emit()
 ```
 
 **Damage formula:** `max(1, attack - defense)`. Minimum 1 damage always
@@ -264,6 +277,14 @@ the dict and `_astar.set_point_solid()`.
 
 `set_cell_solid(cell, false)` restores the A* point to the tile-type-driven
 solid state (solid only if `TileType.BLOCKED`).
+
+**AStarGrid2D configuration:**
+- `diagonal_mode = DIAGONAL_MODE_NEVER` — orthogonal movement only.
+- `default_estimate_heuristic = HEURISTIC_MANHATTAN` — correct heuristic for
+  orthogonal grids; Euclidean (the default) underestimates costs here.
+- `get_id_path(from, to, allow_partial_path=true)` — returns the closest
+  reachable cell when the destination is blocked, preventing enemies from
+  freezing when their target is surrounded.
 
 **AStarGrid2D quirk:** the destination cell must NOT be solid when calling
 `get_astar_path`. EnemyAI temporarily unblocks both endpoints before querying,
