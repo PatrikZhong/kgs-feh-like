@@ -4,17 +4,18 @@
 
 ```
 [Overworld.tscn]  ← main scene (project.godot run/main_scene)
-  ├── EdgesContainer (Node2D)        Line2D edges drawn in _draw_edges()
+  ├── EdgesContainer (Node2D)        reserved; no edges are drawn at runtime
   └── NodesContainer (Node2D)
        └── OverworldNode.tscn × N   scripts/overworld/OverworldNode.gd
                                      scripts/overworld/Overworld.gd
 
 [BattleMap.tscn]  ← loaded on overworld node click
-  ├── Camera2D                       position=(160,160) zoom=(2,2)
+  ├── Camera2D (BattleCamera)        scripts/battle/BattleCamera.gd — dynamic fit-zoom, edge pan, scroll zoom
   ├── GridManager (Node2D)           scripts/battle/GridManager.gd
   ├── HighlightLayer (Node2D)        scripts/battle/HighlightLayer.gd   z_index=1
   ├── UnitsLayer (Node2D)                                                z_index=2
   │    └── Unit.tscn × N            scripts/battle/Unit.gd
+  ├── SpawnersLayer (Node2D)         holds UnitSpawner nodes for player & enemy spawns
   └── HUD (CanvasLayer)              scripts/ui/HUD.gd
        ├── Panel
        │    └── VBox
@@ -60,9 +61,19 @@ World space            Grid space
 Grid is 8×8 (`GRID_WIDTH = GRID_HEIGHT = 8`).
 Total world extent: 320×320 px.
 
-**Camera:** `Camera2D` at world position (160, 160) with zoom (2, 2).
-At 2× zoom the 40px world tiles appear as 80px on screen and the 320×320
-grid is centred inside the 1152×820 viewport with ~128px margins.
+**Camera:** `BattleCamera` (`scripts/battle/BattleCamera.gd`, extends Camera2D).
+`BattleMap._fit_camera()` computes an integer fit-zoom so the full 320×320 grid
+fills the viewport above the HUD (HUD_HEIGHT=64 px reserved), then calls
+`_cam.setup(grid_center, grid_size, fit_zoom)`.
+
+After setup, BattleCamera supports:
+
+| Feature       | Detail                                                                 |
+|---------------|------------------------------------------------------------------------|
+| Edge panning  | Mouse within 60 px of viewport edge moves camera at 400 px/s (world-corrected) |
+| Scroll zoom   | Mouse-wheel zooms toward cursor; ZOOM_STEP=1.25 per tick; range [fit_zoom, 5.0] |
+| Pan lock      | `panning_locked = true` while the player is dragging a unit            |
+| Bounds clamp  | Camera stays within grid rect at all zoom levels                       |
 
 ## Display Settings (project.godot)
 
@@ -79,6 +90,25 @@ The dark earthy clear colour fills the margins around the grid that are
 visible outside the 320×320 world area.
 
 ## Data Resources
+
+### Unit data — data-driven design
+
+There is a **single generic `Unit` scene** (`scenes/battle/Unit.tscn`) used for every unit
+in the game — player or enemy. No per-class scripts or scenes exist (no `KnightUnit.gd`,
+`ArcherUnit.gd`, etc.). The "class" of a unit is entirely determined by a `UnitData`
+resource injected before the node enters the scene tree:
+
+```
+BattleMap._spawn(data, cell, is_player)
+  unit.data = data          ← assigned before add_child()
+  add_child(unit)           ← Unit._ready() fires here
+    └── current_hp = data.max_hp
+        attack_range = data.attack_range
+        _setup_sprite()     ← picks PNG paths from data.class_type
+```
+
+Adding a new unit type requires: (1) a new `.tres` file, (2) a new `ClassType` enum value,
+(3) a new `match` arm in `Unit._get_sprite_paths()`. No new scripts or scenes are needed.
 
 ### Unit data (`resources/units/`)
 
@@ -115,8 +145,6 @@ scene transition, and read by GridManager (tileset) and BattleMap (spawns).
 
 `is_node_unlocked(id)` — returns `id in unlocked_node_ids`.
 
-`unlock_edge(index)` / `is_edge_unlocked(index)` — edge unlock helpers;
-defined but not yet called anywhere (reserved for future use).
 
 ## Sprite System
 
@@ -229,18 +257,22 @@ All three enemies are Armored Orcs (`ARMORED_ORC_DATA`).
 
 ## Overworld
 
-### World graph (hardcoded in Overworld.gd)
+### World graph (scene-driven)
 
-```gdscript
-_WORLD_NODES = [
-  {id:0, label:"Tutorial",    pos:(200,300), scene:"BattleMap.tscn"},
-  {id:1, label:"Forest Path", pos:(420,180), scene:"BattleMap.tscn"},
-  {id:2, label:"River Ford",  pos:(640,310), scene:"BattleMap.tscn"},
-]
-_WORLD_EDGES = [{a:0, b:1}, {a:1, b:2}]
-```
+`Overworld.gd` reads the graph from the scene tree at runtime:
 
-TODO: migrate to a `WorldGraph.tres` resource.
+- **Nodes** — `OverworldNodeUI` children under `NodesContainer` in `Overworld.tscn`.
+  Each node exposes an `id` and a `scene_path` (battle scene to load).
+  `_setup_nodes()` iterates these children and connects `node_clicked` signals.
+
+- **Edges** — `@export var edges: Array = [[0, 1], [1, 2]]` in `Overworld.gd`.
+  Each entry is `[id_a, id_b]`. Edges are not drawn at runtime; they exist only
+  to express connectivity for future use (e.g. progression gating).
+
+To add a new overworld node: add an `OverworldNodeUI` instance to `NodesContainer`
+in the Godot editor and append its edge pairs to the `edges` export array.
+
+TODO: migrate to a `WorldGraph.tres` resource for cleaner authoring.
 
 ### OverworldNode visuals (OverworldNodeUI)
 
@@ -256,12 +288,8 @@ node's name.
 
 ### Overworld edge visuals
 
-Edges are `Line2D` nodes (width 4.0) added to `EdgesContainer`:
-
-| Condition               | Color                        |
-|-------------------------|------------------------------|
-| Both endpoints unlocked | `Color.WHITE`                |
-| Any endpoint locked     | `Color(0.5, 0.5, 0.5, 0.6)` |
+Edges are **not drawn** at runtime. The `_draw_edges()` function was removed;
+`EdgesContainer` is retained as a placeholder for future visual work.
 
 ### Scene flow
 
@@ -300,7 +328,7 @@ cell lookups. All code paths that change a unit's cell must keep it in sync:
 | Code path                | Action                                    |
 |--------------------------|-------------------------------------------|
 | `_spawn()`               | `_unit_by_cell[cell] = unit`              |
-| `_commit_move()`         | erase old cell, insert new cell           |
+| `_commit_move()`         | erase old cell, insert new cell; `set_moved()` fires before tween |
 | `_commit_placement_move()` | erase old cell, insert new cell         |
 | `move_unit_instant()`    | erase old cell, snap, insert new cell     |
 | `_on_unit_died()`        | `_unit_by_cell.erase(unit.grid_cell)`     |
@@ -310,6 +338,26 @@ cell lookups. All code paths that change a unit's cell must keep it in sync:
 `move_unit_instant(unit, cell)` is the shared primitive for all non-tweened
 moves. EnemyAI calls this instead of touching `snap_to_cell` + `set_cell_solid`
 directly. BattleMap also exposes `perform_combat()` as public for EnemyAI.
+
+## UnitSpawner
+
+`scripts/battle/UnitSpawner.gd` — `@tool` Node2D used to author unit spawns
+inside battle scenes. Fields:
+
+| Property       | Type      | Meaning                                          |
+|----------------|-----------|--------------------------------------------------|
+| `unit_data`    | UnitData  | Which unit type to spawn                         |
+| `is_player_unit` | bool    | `true` → player roster; `false` → enemy          |
+| `cell`         | Vector2i  | Grid cell for enemy spawns (ignored for players) |
+
+Setting `cell` in the inspector snaps the node's world position to the cell
+centre (TILE_SIZE=40 px). In the editor, the spawner draws a coloured indicator
+(blue for player, red for enemy) with the class initial letter so the level
+layout is visible without running the game.
+
+`BattleMap._begin_placement()` reads all `UnitSpawner` children of `SpawnersLayer`
+to determine the player roster and enemy positions. See battle-system.md for
+the full spawn logic.
 
 ## Key Invariants
 

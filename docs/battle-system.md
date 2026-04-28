@@ -160,15 +160,16 @@ move_unit_instant(unit, cell)            ← used by EnemyAI, placement phase
   ├── grid_mgr.set_cell_solid(cell, true)
   └── _unit_by_cell[cell] = unit
 
-_commit_move(unit, cell)                 ← used by player drag (tweened)
+_commit_move(unit, cell, path)           ← used by player drag (tweened)
   │
   ├── _unit_by_cell.erase(unit.grid_cell)
   ├── grid_mgr.set_cell_solid(unit.grid_cell, false)   ← free old cell
   ├── grid_mgr.set_cell_solid(cell, true)              ← claim new cell
   ├── unit.grid_cell = cell
   ├── _unit_by_cell[cell] = unit
-  ├── Tween: unit.position → grid_to_world(cell)  (0.10 s)
-  └── unit.set_moved()   ← has_moved = true, sprite darkened (SPENT_DARKEN=0.45)
+  ├── unit.set_moved()   ← has_moved = true, sprite darkened immediately (SPENT_DARKEN=0.45)
+  └── Tween: 0.07 s per step along path; 0.10 s direct move if path is empty
+      (set_moved fires before tween; unit is greyed out as soon as move starts)
 ```
 
 ## Attack Range Computation
@@ -215,15 +216,27 @@ Returns best_cell (defaults to `from` if no valid cell found).
   Range-1 units (melee) must be exactly adjacent. If the hover cell fails
   this check, falls back to `_find_best_attacker_cell`.
 
-### Arrow path (breadcrumb)
+### Arrow path (shortest path)
 
-`_arrow_path` records the sequence of blue tiles the cursor has visited:
+`_arrow_path` holds the current path from the origin to the last valid hovered
+blue tile. It is recomputed (not accumulated) each time the cursor enters a
+new reachable cell:
 
-- Start: `[_original_cell]`
-- Each time cursor enters a new blue tile: append to path
-- Each time cursor re-enters an already-visited blue tile at index `idx`:
-  trim `_arrow_path` to `slice(0, idx+1)` (removes the loop)
-- Result: `_drag_arrow.points` traces this exact path, not a straight line
+```
+Mouse enters a blue tile (hovered):
+  new_path = grid_mgr.get_shortest_path(
+      _original_cell, hovered, can_jump_allies, ally_cells)
+  if new_path.size() - 1 <= move_range:
+      _arrow_path = new_path    ← replaces old path entirely
+```
+
+- Start: `_arrow_path = [_original_cell]`
+- On each valid hover: replaced with the A*-shortest path to that tile
+- Paths longer than the unit's `move_range` are rejected (path stays unchanged)
+- `_drag_arrow.points` traces this path cell-by-cell in world space
+
+On drop, if `_arrow_path[-1] != drop_cell`, a fresh shortest path is computed
+to guarantee the tween ends at the exact drop target.
 
 ## Combat Resolution
 
@@ -350,3 +363,47 @@ Ghost behavior:
 Arrow endpoint (`_drag_arrow` via `_arrow_path`) tracks the breadcrumb of
 visited blue tiles — not the raw cursor position. The attack arrow only
 appears when `_hovered_attack_target` is non-null.
+
+## Unit Spawning
+
+`BattleMap._begin_placement()` runs at scene start and populates the board.
+All `UnitSpawner` nodes that live under `SpawnersLayer` and have a `unit_data`
+assigned are split by their `is_player_unit` flag:
+
+```
+SpawnersLayer children (UnitSpawner, unit_data != null)
+  │
+  ├── is_player_unit = true  → player_spawners
+  └── is_player_unit = false → enemy_spawners
+```
+
+### Player units
+
+Unit types come from `player_spawners` (or fall back to `[KNIGHT, ARCHER, MAGE]`
+if none are present). Positions are assigned left-to-right from `PlacementZoneLayer`
+cells — the spawner `cell` property is **ignored** for players.
+
+**Future:** replace this entirely with `SaveData.player_roster` once the
+unit-selection screen is implemented. At that point per-battle player `UnitSpawner`
+nodes become unnecessary.
+
+### Enemy units
+
+If `enemy_spawners` exist, each one defines **both** the unit type (`unit_data`)
+and the spawn cell (`cell`). This is the preferred path for new battle scenes —
+it makes each `Battle_*.tscn` self-contained.
+
+**Fallback (legacy):** if no enemy spawners are present, falls back to 3×
+`ArmoredOrc` spawned at cells painted in `EnemySpawnLayer`. This keeps
+pre-existing scenes working without modification.
+
+### Authoring a new battle with custom enemies
+
+1. Open the `Battle_N.tscn` in the Godot editor.
+2. In `SpawnersLayer`, instance `scenes/battle/UnitSpawner.tscn` for each enemy.
+3. In the Inspector for each spawner:
+   - Set **Unit Data** → the desired `.tres` (e.g. `ArmoredOrcData.tres`).
+   - Set **Is Player Unit** → `false`.
+   - Set **Cell** → the grid cell where the enemy should start (Vector2i).
+4. Repeat for player units if you want a fixed roster for this battle (set
+   **Is Player Unit** → `true`). Otherwise the default three will be used.

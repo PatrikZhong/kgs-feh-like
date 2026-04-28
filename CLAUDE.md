@@ -1,176 +1,228 @@
-This is the repository that contains a game. The game is:
+# kgs-feh-like — Tactical RPG
 
-- A tactical RPG
-- Grid-based
+A grid-based tactical RPG inspired by Fire Emblem Heroes (FEH), modified with a focus on speed and fluidity:
 
-It seeks to emulate Fire Emblem, specifically the mobile version, Fire Emblem Heroes (FEH). However, it will modify it with several things:
+- Movement must feel extremely fluid and responsive.
+- Minimal animations to maximize gameplay time — the board should mutate rapidly.
+- A second inspiration is chess blitz: the feeling of "take, take, take" when exchanging pieces and seizing favourable positions.
 
-- The movement must be extremely fluid and feel good.
-- Minimal animations to maximize gameplay time. The board should mutate rapidly, with choices having to be done quickly.
-- Another inspiration is chess, specifically the blitz time control. We seek to implement the feeling of "take, take, take" in chess when exchanging pieces and coming into favourable positions.
+---
 
-# Claude Code conventions
+# Instructions for Claude
+
+## Conventions
 
 - Do not add `Co-Authored-By` lines to commit messages.
-- Furthermore, we need to document every single gameplay feature we have in the game, so that claude code can keep track of the entire state of the game. Never make any commits until this is done. 
+- Every gameplay feature must be documented so Claude can track the full state of the game.
 
-# WORKFLOW
+## Workflow
 
-After every code or scene change, in this order:
-1. Run headless check: `"D:/godot-engine/Godot_v4.5-stable_win64_console.exe" --path "D:/code/kgs-feh-like" --headless --quit-after 5 "res://scenes/battle/battles/Battle_0.tscn" 2>&1` — fix all errors before proceeding.
-2. Update the `Implemented` section in this file if a feature was added, changed, or removed.
-3. Update the relevant file in `docs/` if architecture, a system's internals, or a public API changed.
+1. After every implementation, run the Godot headless check (see below) and fix all errors before finishing.
+2. After every feature change, update the relevant file in `docs/`.
+3. Never commit until both of the above are done.
 
-# Technical Documentation
+### Headless check commands
 
-Detailed codebase documentation lives in `docs/`:
+```bash
+# Battle scene
+"D:/godot-engine/Godot_v4.5-stable_win64_console.exe" --path "D:/code/kgs-feh-like" --headless --quit-after 5 "res://scenes/battle/battles/Battle_0.tscn" 2>&1
 
-- `docs/architecture.md` — scene tree, autoloads, coordinate system, data resources
-- `docs/battle-system.md` — drag-drop flow, attack range math, combat resolution, GridManager pathfinding
-- `docs/turn-system.md` — PLAYER/ENEMY state machine, round lifecycle, EnemyAI coroutine
+# Overworld scene
+"D:/godot-engine/Godot_v4.5-stable_win64_console.exe" --path "D:/code/kgs-feh-like" --headless --quit-after 5 "res://scenes/overworld/Overworld.tscn" 2>&1
+```
 
-# Tech Stack
+Exit 0 + no `ERROR:` / `SCRIPT ERROR:` / `WARNING:` lines = clean.
+
+---
+
+# Project Setup
+
+## Tech Stack
 
 - **Engine:** Godot 4.5 (stable)
 - **Executable:** `D:\godot-engine\Godot_v4.5-stable_win64_console.exe`
 - **Language:** GDScript
-- **External libraries:** None initially
+- **External libraries:** None
 
-# User controls:
+## Documentation
 
-- Drag and drop
-- The player clicks and holds a sprite to move it. It then drops it on an available square within its range.
+Full codebase documentation lives in `docs/`:
 
-# Turn structure
+- `docs/architecture.md` — scene tree, autoloads, coordinate system, data resources, BattleCamera, UnitSpawner
+- `docs/battle-system.md` — drag-drop flow, attack range math, combat resolution, GridManager pathfinding
+- `docs/turn-system.md` — PLAYER/ENEMY state machine, round lifecycle, EnemyAI coroutine
 
-- **One action per turn:** moving a unit immediately passes the turn to the enemy. There is no multi-unit selection.
-- **Alternating actions:** player moves one unit → one enemy moves → repeat.
-- **Round counter:** a round ends when every living unit on both sides has moved. The counter increments and all units reset (become selectable again).
-- **Grey-out:** a unit is greyed out as soon as it has moved. It cannot be selected again until the next round.
+---
+
+# Game Design
+
+## Controls
+
+- **Drag and drop.** The player clicks and holds a unit sprite to pick it up, then releases on a valid tile within its movement or attack range.
+
+## Turn Structure
+
+- **One action per turn:** moving a unit immediately ends that unit's turn. There is no multi-unit selection.
+- **Initiative order:** units act in descending initiative order each round (Cavalry → Mage → Archer → Knight → Armored Orc).
+- **Round counter:** a round ends when every living unit on both sides has acted. All units reset and become selectable again.
+- **Grey-out:** a unit is visually darkened as soon as it moves. It cannot be selected again until the next round.
 - **End Turn button:** skips all remaining player moves for the round, then lets enemies finish their actions.
-- This structure enforces the fast, blitz-chess pace of the game.
+- **Begin Battle button:** ends the placement phase and starts combat.
 
-# Player
+## Player Classes
 
-- Control several characters
-- Several classes with skill trees should be available.
+| Class   | HP | ATK | DEF | MOV | RNG | Special |
+|---------|----|-----|-----|-----|-----|---------|
+| Knight  | 50 | 12  | 15  |  3  |  1  | Tank archetype |
+| Cavalry | 36 | 14  |  8  |  5  |  1  | Can jump over allied units (intentional — unlike standard FEH) |
+| Archer  | 34 | 16  |  6  |  3  |  2  | Ranged attacks |
+| Mage    | 26 | 20  |  4  |  3  |  2  | Ranged attacks |
 
-## Classes
+## Enemies
 
-- Knight, more hp and defense.
-- Cavalry, can jump over allied units (intentional design choice — unlike standard FEH cavalry), more movement.
-- Archer, ranged damage.
-- Mage, spells that modify the board.
+| Unit        | HP | ATK | DEF | MOV | RNG | Notes |
+|-------------|----|----|-----|-----|-----|-------|
+| Armored Orc | 50 | 12  | 15  |  3  |  1  | Enemy-only; tank archetype; 3 spawn per battle via UnitSpawner nodes |
 
-# Map
+## Map & Overworld
 
-The game should have an overworld, which is basically a graph with edges and nodes with a background.
-Each node is clickable, and represents an instance. Once the instance is entered, we change into a grid-based tactical tile.
+**Overworld:** A graph of clickable nodes connected by edges. Edges unlock progressively to show progression. Nodes are authored as `OverworldNodeUI` scene children; edges are an `@export var edges: Array` in `Overworld.gd`.
 
-## Overworld
+**Battle instance:** A grid-based tactical map. Units stand on tiles and move through them. Each battle is a `Battle_N.tscn` scene with `UnitSpawner` nodes defining enemy positions and types.
 
-A graph with edges. Each node represents an instance, and each edge represents a possible route. We open up edges progressively as a way to show progress.
+---
 
-## Instance
-- grid-based, consisting of tiles. Units stand on tiles and move through them.
+# How-To: Adding a New Unit Class
 
-# Enemies
+All character sprites live in `assets/sprites/Characters(100x100)/`.
+Each class needs a sub-folder with 4 horizontal-strip PNGs (100×100 px per frame):
 
-- **Armored Orc** (ClassType 4): enemy-only unit. HP 50, ATK 12, DEF 15, MOV 3, RNG 1. 3 spawn per battle at positions defined in `BattleMap.BATTLE_ENEMY_SPAWNS`. Same stats as Knight — the "tank" archetype for early battles.
-- Future: add enemy variety (ranged, fast, boss units).
+| File suffix   | Loops? | Typical frame count |
+|---------------|--------|---------------------|
+| `*-Idle.png`  | yes    | 6                   |
+| `*-Walk.png`  | yes    | 8                   |
+| `*-Hurt.png`  | no     | 4                   |
+| `*-Death.png` | no     | 4                   |
+
+**Step 1 — Add sprite sheets (manual)**
+
+Place PNGs in a new folder:
+```
+assets/sprites/Characters(100x100)/MyClass/MyClass with shadows/
+  MyClass-Idle.png
+  MyClass-Walk.png
+  MyClass-Hurt.png
+  MyClass-Death.png
+```
+Each PNG must be a horizontal strip where every frame is exactly 100×100 px.
+
+**Step 2 — Extend the `ClassType` enum in `scripts/data/UnitData.gd`**
+```gdscript
+enum ClassType { KNIGHT = 0, CAVALRY = 1, ARCHER = 2, MAGE = 3, ARMORED_ORC = 4, MY_CLASS = 5 }
+```
+
+**Step 3 — Add a `match` arm in `scripts/battle/Unit.gd:_get_sprite_paths()`**
+```gdscript
+UnitData.ClassType.MY_CLASS:
+    return {
+        "idle":  BASE + "MyClass/MyClass with shadows/MyClass-Idle.png",
+        "walk":  BASE + "MyClass/MyClass with shadows/MyClass-Walk.png",
+        "hurt":  BASE + "MyClass/MyClass with shadows/MyClass-Hurt.png",
+        "death": BASE + "MyClass/MyClass with shadows/MyClass-Death.png",
+    }
+```
+
+**Step 4 — Create a `.tres` resource file**
+
+Duplicate an existing file in `resources/units/` (e.g. `KnightData.tres`) and update: `unit_name`, `class_type` (enum int), `max_hp`, `attack`, `defense`, `move_range`, `attack_range`, `can_jump_allies`, `initiative`.
+
+**Step 5 — Add a `CLASS_LABELS` entry in `scripts/battle/Unit.gd`**
+```gdscript
+const CLASS_LABELS := ["K", "C", "A", "M", "O", "X"]  # one letter per ClassType
+```
+
+No other code changes required. The sprite system, HUD queue bar, and ghost drag pick up the new class automatically.
+
+# TODO
+
+## Unique Selling Point, FORMATION
+
+A formation is when a specific type of character (A captain) has another type of character, a "troop", close to it in its nearby 3x3 grid. Depending on the relative position between the character and the other friendly character near it, it produces bonuses for the characters in formation.
+
+Mechanics
+
+- When in formation, the unit moves "as one". it means we treat their drag and drop as one single movement. 
+- The initiative of the formation is the average initiative value. Maybe plus a constant from the captain.
+- All initatives assume that facing east is "forward". We always keep the cardinal direction in such a way. 
+- When attaching to a formation, we must confirm the move.
+- We can leave a formation by clicking the unit, and then press a leave formation button. 
+Algorithm for finding a formation:
+- Any character around a NxN grid around the character. 
+
+
+
+ideas for formations:
+
+- In a formation, movement is reduced, but all units move the same time. 
+- In a formation, stats are massively boosted (if its a good formation, such as a frontline with arrows in the back).
+- Some people increase the formation range (such as a captain, that has a formation range of 4x4).
+- Some people want to leave the formation, such as an assassin or rogue, to accomplish objectives or to harrass the enemy formation. Maybe they intend to kill the other enemy captain.
+- The enemies will also be in formation.
+    - This will be a good way of determining the difficulty of each map. As the enemy becomes smarter, they spawn in better formations and act more as a unit.
+    - As we add more and more units to the formation, stats and interesting combinations inrease exponentially. 
+- Getting into certain formations will trigger certain actions. A spearwall might create a spear thrust.
+- The main playable character will mostly be a captain. The captain will be the one that decides the "flavour" of the run.
+
+### Classes and Formations
+Two specific types of units will exist:
+- A "Captain" that keeps the formation together and acts as the pillar of whether a formation is allowed to exist or not. 
+- A "Trooper" that is part of the formation. Troopers alone cannot create a formation. They need a captain somewhere in the geometry for a formation to work.
+
+Examples:
+
+    - A ranger captain might start with two knight troops to create a frontline formation.
+    - A mage captain might have a single strong elemental troop to shield themselves from damage, will casting spells behind it. 
+    - A knight captain might have a healer + ranger troops.
+    - A bard captain might be weaker, but have more troops.
+
+All units can be all classes, but there must be a captain version  and a trooper version. 
 
 # Future / Stretch Goals
 
 The following are potential ideas not in the confirmed scope of the initial build:
 
-- A time control variant, a bit like Blitz. Maybe 3+2 (3 minute start, with a 2 second increment for each move)
 - Certain tiles are more important, such as high ground tiles (attack/defense bonus).
 - Certain tiles are dangerous (deal damage at end of turn to units standing on them).
 - Formations. Attach units to each other for various bonuses, forsaking mobility and potentially action economy-
 - Classes with skill trees.
+- Implement a roguelike aspect, where death is permanent but with small persistent rewards over time. 
 
 
-# Implemented (as of Phase 9 completion)
 
-- All 4 player classes + Armored Orc enemy with animated sprites (horizontal strip PNGs)
-- 8×8 grid with A* pathfinding; Cavalry can jump allied units
-- Drag-and-drop with ghost sprite, shortest-path arrow, and orange attack-range overlay
-- Arrow always shows the true shortest BFS path from origin to hovered tile; capped at the unit's `move_range` (path never draws longer than the unit can move)
-- Unit movement animates step-by-step along the shortest path (70 ms/cell) instead of tweening directly to the destination
-- Single drag gesture: drop on movement tile = move; drop on enemy = move-then-attack
-- TurnManager state machine: PLAYER_TURN ↔ ENEMY_TURN, round counter, grey-out
-- EnemyAI: moves up to its full `move_range` toward the nearest player unit along an A* path, attacks if in range
-- CombatResolver: ATK − DEF damage, counterattack if defender in range
-- HUD: turn/round label, End Turn button, result screen (Victory/Defeat), Danger Zone toggle
-- Danger Zone: red overlay showing all tiles enemy units can reach or attack
-- Enemy hover inspection: hovering an enemy shows its move+attack range
-- UnitSpawner nodes in Battle_*.tscn scenes for per-battle unit placement
-- 3 battle nodes (Battle_0, Battle_1, Battle_2) with distinct enemy spawn positions
-- Overworld graph with SaveData progression; victory unlocks next node
-- Overworld nodes and edges are fully editor-configurable (see **Overworld authoring** below)
-- Camera auto-fits to grid (largest integer zoom that keeps grid in viewport)
-- `BattleMap._unit_by_cell` dictionary for O(1) cell→unit lookup (replaces O(n) linear scan)
-- `BattleMap.move_unit_instant(unit, cell)` — shared primitive for all non-tweened moves; keeps `_unit_by_cell` and A* solidity in sync; used by EnemyAI
-- `GridManager.get_shortest_path(start, goal, can_jump_allies, blocked_cells)` — BFS returning the actual cell path with the same blocking rules as `get_reachable_cells`
-- `PlacementZoneLayer` (TileMapLayer, blue modulate) in each `Battle_*.tscn`: paint tiles in the Godot editor to define the pre-battle placement zone; hidden at runtime; falls back to `placement_zone_cols × placement_zone_rows` rectangle if empty
-- `EnemySpawnLayer` (TileMapLayer, red modulate) in each `Battle_*.tscn`: each painted cell defines one enemy spawn point; hidden at runtime; falls back to random valid cells if empty
-- `GridManager.tilemap_to_grid(tilemap_cell)` — converts a TileMapLayer cell coordinate to grid-local coords (subtracts `_origin`); used by all authoring layers
-- `GridManager.TILE_TYPE_LAYERS` registry — maps TileMapLayer node name → `TileType`; `_read_tile_type_layers()` iterates it on `_ready()` to populate `_tile_types` and A* solidity; **adding a new tile type = one enum value + one dict entry + one new TileMapLayer node**
-- `CollisionLayer` (near-black) — painted cells become `TileType.BLOCKED`: impassable to all units and A*
-- `HighGroundLayer` (gold) — painted cells become `TileType.HIGH_GROUND`: ATK/DEF bonus (effect not yet implemented)
-- `DangerousLayer` (orange) — painted cells become `TileType.DANGEROUS`: end-of-turn damage (effect not yet implemented)
-- `AStarGrid2D` configured with `HEURISTIC_MANHATTAN` (correct for orthogonal grids) and `allow_partial_path=true` (enemies pathfind to nearest reachable cell when target is blocked)
+## Stats
 
-# Overworld authoring
-
-All overworld content is set up in `scenes/overworld/Overworld.tscn` — no code changes needed for new nodes, edges, or backgrounds.
-
-## Adding a battle node
-
-1. Open `Overworld.tscn` in the Godot editor.
-2. In the scene tree, select `NodesContainer`.
-3. Instance `scenes/overworld/OverworldNode.tscn` as a child.
-4. Move it to the desired position on the map canvas.
-5. In the Inspector, fill in three exported properties:
-   - **Node Id** — unique integer (increment from the last node; must match the id used in SaveData progression)
-   - **Node Label** — display name shown under the node circle
-   - **Battle Scene** — res:// path to the battle scene (e.g. `res://scenes/battle/battles/Battle_3.tscn`)
-
-## Adding an edge
-
-1. Select the root `Overworld` node.
-2. In the Inspector, find the **Edges** array.
-3. Add an entry: `[id_a, id_b]` — the two node ids to connect.
-4. Edges are drawn as white lines (unlocked) or grey lines (locked) at runtime; no further setup needed.
-
-## Setting the map background
-
-1. Select the `MapSprite` node (Sprite2D, `z_index = -1`).
-2. In the Inspector, assign any JPG or PNG to its **Texture** property.
-3. Adjust **Scale** so the image fills the viewport (1280×720). The `Background` ColorRect (`z_index = -2`) covers anything outside the image edges.
-
-## Progression unlock rule
-
-`SaveData.unlock_after_battle(battle_id)` appends `battle_id + 1` to `unlocked_node_ids`. Node 0 is always unlocked. New nodes start locked until the preceding battle is won.
-
-# TODO
-
-
-## Pre-battle state
-
-- Do not use the existing battle movement system during placement. We should simply be able to drop the units.
+- Attack damage
+- Defence
+- Leadership. 1 leadership is one tile around the character. 2 leadership is two tiles etc... 1 = 3x3 grid, 2 = 4x4 grid. 
+- Initiative. When in the turn you play.
 
 ## Overworld
 - Add interesting side-nodes and more complex graph paths
-- Dynamic battle grid sizing (currently fixed 8×8)
 
-## Battle
+### Battle
 - Bosses with unique stats or behaviour
-- Class-specific active traits to distinguish units beyond stats (e.g. Mage board spells, Knight shield)
+- Class-specific active abilities (e.g. Mage board spells, Knight shield)
 - Special tiles: high-ground (ATK/DEF bonus) and dangerous tiles (end-of-turn damage)
 
-## Items
+### Items
 - Inventory slots and equippable items
 
-## Art
+### Art
 - Additional enemy sprites and class variants
+
+## Stretch Goals
+
+- **Blitz time control** — e.g. 3+2 (3 min start, 2 sec increment per move)
+- **Tile modifiers** — high-ground (ATK/DEF bonus), dangerous tiles (end-of-turn damage)
+- **Formations** — link units for bonuses at the cost of mobility and action economy
+- **Skill trees** — per-class progression

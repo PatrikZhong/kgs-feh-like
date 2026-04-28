@@ -1,14 +1,10 @@
-[gd_resource type="Resource" script_class="UnitData" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitData" load_steps=2 format=3 uid="uid://b2m78tmigc1h7"]
 
-[ext_resource type="Script" path="res://scripts/data/UnitData.gd" id="1"]
+[ext_resource type="Script" uid="uid://divmx2f4qkkd4" path="res://scripts/data/UnitData.gd" id="1"]
 
 [resource]
 script = ExtResource("1")
 unit_name = "Knight"
-class_type = 0
 max_hp = 50
 attack = 40
 defense = 15
-move_range = 3
-attack_range = 1
-can_jump_allies = false

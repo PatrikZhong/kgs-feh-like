@@ -1,10 +1,11 @@
-[gd_scene format=3]
-
-; Placeholder — skill trees are a stretch goal (see .CLAUDE.md).
+[gd_scene format=3 uid="uid://bofga8a1xv8kl"]
 
 [node name="SkillTree" type="Control"]
+layout_mode = 3
+anchors_preset = 0
 
 [node name="Label" type="Label" parent="."]
+layout_mode = 0
 offset_left = 20.0
 offset_top = 20.0
 offset_right = 300.0

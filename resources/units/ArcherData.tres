@@ -1,6 +1,6 @@
-[gd_resource type="Resource" script_class="UnitData" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitData" load_steps=2 format=3 uid="uid://sk17div4jfb7"]
 
-[ext_resource type="Script" path="res://scripts/data/UnitData.gd" id="1"]
+[ext_resource type="Script" uid="uid://divmx2f4qkkd4" path="res://scripts/data/UnitData.gd" id="1"]
 
 [resource]
 script = ExtResource("1")
@@ -9,6 +9,5 @@ class_type = 2
 max_hp = 34
 attack = 50
 defense = 6
-move_range = 3
 attack_range = 2
-can_jump_allies = false
+initiative = 6

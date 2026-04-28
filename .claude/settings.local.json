@@ -12,11 +12,12 @@
       "WebSearch",
       "Bash(npx:*)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "mcp__godot-mcp-docs__get_documentation_tree"
+      "mcp__godot-mcp-docs__get_documentation_tree",
+      "Skill(update-config)"
     ]
   },
   "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
-    "godot-docs"
+    "godot-docs"  
   ]
 }

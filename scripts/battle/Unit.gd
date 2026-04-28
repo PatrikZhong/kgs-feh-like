@@ -16,11 +16,13 @@ var _is_dragging: bool = false
 var _animated_sprite: AnimatedSprite2D = null
 
 # Colours used for drawing
-const PLAYER_COLOR  := Color(0.20, 0.45, 0.90)
-const ENEMY_COLOR   := Color(0.85, 0.25, 0.20)
-const SPENT_DARKEN  := 0.45
-const UNIT_RADIUS   := 22.0
-const CLASS_LABELS  := ["K", "C", "A", "M", "O"]
+const PLAYER_COLOR     := Color(0.20, 0.45, 0.90)	
+const ENEMY_COLOR      := Color(0.85, 0.25, 0.20)
+const SPENT_DARKEN     := 0.45
+## Modulate applied to units that are alive but not the current queue actor.
+const INACTIVE_MODULATE := Color(0.55, 0.55, 0.55, 1.0)
+const UNIT_RADIUS      := 22.0
+const CLASS_LABELS     := ["K", "C", "A", "M", "O"]
 
 # Sprites are 100×100 px per frame; scaled to fill a 64px tile.
 const SPRITE_FRAME_PX := 100
@@ -156,6 +158,14 @@ func end_drag() -> void:
 	modulate.a = 1.0
 	queue_redraw()
 
+## Returns frame 0 of the idle animation, suitable for a portrait thumbnail.
+## Returns null if the sprite hasn't been set up yet.
+func get_portrait_texture() -> Texture2D:
+	if _animated_sprite and _animated_sprite.sprite_frames \
+			and _animated_sprite.sprite_frames.has_animation("idle"):
+		return _animated_sprite.sprite_frames.get_frame_texture("idle", 0)
+	return null
+
 ## Returns a semi-transparent AnimatedSprite2D clone suitable for use as a
 ## drag ghost. The caller is responsible for adding it to the scene tree.
 func make_ghost_sprite() -> AnimatedSprite2D:
@@ -178,6 +188,23 @@ func play_hit_flash() -> void:
 
 func is_spent() -> bool:
 	return has_moved
+
+## Highlights this unit as the current queue actor (full brightness).
+func set_active_highlight() -> void:
+	if _animated_sprite:
+		_animated_sprite.modulate = Color.WHITE
+
+## Dims this unit to show it is not the current queue actor.
+## No-op when the unit is already spent — set_moved() already darkened it.
+func set_inactive_dim() -> void:
+	if _animated_sprite and not has_moved:
+		_animated_sprite.modulate = INACTIVE_MODULATE
+
+## Plays the named animation if the sprite has it.
+func play_anim(anim_name: String) -> void:
+	if _animated_sprite and _animated_sprite.sprite_frames \
+			and _animated_sprite.sprite_frames.has_animation(anim_name):
+		_animated_sprite.play(anim_name)
 
 # ---------------------------------------------------------------------------
 # Drawing

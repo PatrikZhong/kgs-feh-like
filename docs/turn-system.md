@@ -3,68 +3,174 @@
 ## State Machine
 
 ```
-                    ┌──────────────────────────────────┐
-                    │          PLAYER_TURN              │
-                    │                                   │
-                    │  Player drags and drops a unit.   │
-                    │  BattleMap calls                  │
-                    │  TurnManager.end_player_turn()    │
-                    └──────────────┬───────────────────┘
+                    ┌───────────────────────────────────┐
+                    │           PLACEMENT               │
+                    │  Player repositions units freely.  │
+                    │  HUD "Begin Battle" →             │
+                    │  TurnManager.start_combat()        │
+                    └──────────────┬────────────────────┘
                                    │
-                    TurnManager.end_player_turn()
-                                   │
-                    ┌──────────────▼───────────────────┐
-                    │          ENEMY_TURN               │
-                    │                                   │
-                    │  Any unmoved enemies?             │
-                    │  → EnemyAI.execute_turn()         │
-                    │  No unmoved enemies?              │
-                    │  → end_enemy_turn() immediately   │
-                    └──────────────┬───────────────────┘
-                                   │
-                    TurnManager.end_enemy_turn()
+                    _build_queue() + _activate_current()
                                    │
                ┌───────────────────┼──────────────────────┐
-               │                   │                      │
-        all_player_done       all_player_done        player still
-        AND all_enemy_done    enemies remain          has moves
-               │                   │                      │
-         _new_round()        EnemyAI.execute_turn()  PLAYER_TURN ◄─┘
-               │              (loop until done)
-      increment turn_count
-      reset all units
-      emit "new_round"
-      PLAYER_TURN
+               │ current slot is   │ current slot is       │
+               │ a player unit     │ an enemy unit         │
+               ▼                   ▼                       │
+        PLAYER_TURN           ENEMY_TURN ──► ACTING        │
+               │              (turn_changed  (current_state│
+               │               emitted)      after signal) │
+               │                   │                       │
+      player drags    EnemyAI.execute_turn(actor)          │
+      and drops       [coroutine, awaits animation]        │
+               │                   │                       │
+        end_player_turn()    end_enemy_turn()              │
+               │                   │                       │
+               └──────── _queue_index++ ─────────────────►┘
+                         _activate_current()
+                                   │
+                         queue exhausted?
+                         ┌─────Yes─┤
+                         │         │ No → next slot (back to branch above)
+                    _new_round()
+                    reset all units
+                    _build_queue()
+                    _activate_current()
 ```
+
+## Queue Construction
+
+`_build_queue()` runs at `start_combat()` and at the start of every new round.
+
+1. Collect all living player units, then all living enemy units into a flat array.
+2. Sort descending by `unit.data.initiative`.  
+   Tie-break: player units go before enemy units at the same initiative.
+3. Set `_queue_index = 0`.
+4. Emit `queue_updated(queue, 0)` via `_activate_current()`.
+
+| Class       | Initiative |
+|-------------|-----------|
+| Cavalry     | 8         |
+| Mage        | 7         |
+| Archer      | 6         |
+| Knight      | 5         |
+| Armored Orc | 4         |
 
 ## Round Lifecycle
 
-A **round** spans the window from all units being fresh until all units have
-moved. The turn counter tracks rounds (not individual moves).
-
 ```
 Round N begins
-  ├── All units: has_moved=false, has_attacked=false
-  ├── current_state = PLAYER_TURN
+  ├── _build_queue(): [CavalryP, MageP, ArcherP, KnightP, OrcE, OrcE, OrcE]
+  │   (example — actual order depends on who is still alive)
   │
-  ├── Player moves unit 1 → end_player_turn() → ENEMY_TURN
-  │     EnemyAI acts → end_enemy_turn()
-  │     player still has unmoved units → PLAYER_TURN
+  ├── Slot 0 (Cavalry — player): PLAYER_TURN
+  │   Player drags Cavalry → end_player_turn() → slot 1
   │
-  ├── Player moves unit 2 → end_player_turn() → ENEMY_TURN
-  │     EnemyAI acts → end_enemy_turn()
-  │     player still has unmoved units → PLAYER_TURN
+  ├── Slot 1 (Mage — player): PLAYER_TURN
+  │   Player drags Mage → end_player_turn() → slot 2
   │
-  └── Player moves last unit → end_player_turn() → ENEMY_TURN
-        EnemyAI acts → end_enemy_turn()
-        all_player_done AND all_enemy_done → _new_round()
+  ├── Slot 2 (Archer — player): PLAYER_TURN
+  │   ...
+  │
+  ├── Slot 3 (Knight — player): PLAYER_TURN
+  │   ...
+  │
+  ├── Slot 4 (Orc 1 — enemy): ENEMY_TURN → ACTING
+  │   EnemyAI coroutine: delay → move (animated) → attack → end_enemy_turn()
+  │
+  ├── Slot 5 (Orc 2 — enemy): ENEMY_TURN → ACTING
+  │   ...
+  │
+  └── Slot 6 (Orc 3 — enemy): ENEMY_TURN → ACTING
+        end_enemy_turn() → _queue_index == queue.size() → _new_round()
 
-Round N+1 begins (turn_count incremented, units reset)
+Round N+1 begins
 ```
 
-The HUD "End Turn" button marks all remaining player units as moved
-(`set_moved()`), then calls `TurnManager.end_player_turn()` — fast-forwarding
-to the enemy phase.
+## Active Highlight / Inactive Dim
+
+When `queue_updated` fires, `BattleMap._on_queue_updated()`:
+- Calls `unit.set_inactive_dim()` on every living unit  
+  (`INACTIVE_MODULATE = Color(0.55, 0.55, 0.55, 1.0)` — already-spent units skip via `has_moved` guard)
+- Calls `unit.set_active_highlight()` on `queue[active_index]`  
+  (restores `_animated_sprite.modulate = Color.WHITE`)
+
+This makes it visually clear whose turn it is without displaying numbers on the grid.
+
+## HUD Queue Bar
+
+`TurnManager.queue_updated(queue: Array, active_index: int)` is consumed by `HUD._on_queue_updated`.
+
+The queue banner at the top of the screen rebuilds its icon row on every emission:
+- One `PanelContainer` per living unit in the queue (dead slots are skipped).
+- Blue background for player units, red for enemies.
+- Active slot has a white `QUEUE_ACTIVE_BORDER`-wide border.
+- Inactive slots are at `QUEUE_INACTIVE_ALPHA` transparency.
+
+All style constants are defined at the top of `HUD.gd` and require no scene edits to change.
+
+## EnemyAI Coroutine
+
+```
+EnemyAI.execute_turn(unit: Unit)  [coroutine — called fire-and-forget by TurnManager]
+  │
+  ├── validity check (unit, map) — bail to end_enemy_turn() if invalid
+  │
+  ├── await ACTION_DELAY (0.40 s) — player sees the active highlight before the move
+  │
+  ├── await _act(unit, map)
+  │       │
+  │       ├── _find_nearest(unit, player_units) → nearest player
+  │       │
+  │       ├── if not has_moved:
+  │       │    await _move_toward(unit, nearest, map)
+  │       │         │
+  │       │         ├── get_astar_path (temporarily unblock src+dst)
+  │       │         ├── walk up to move_range steps, stop before occupied cells
+  │       │         ├── BattleMap.show_enemy_arrow(path_slice)   ← yellow Line2D
+  │       │         ├── await BattleMap.move_unit_animated(...)   ← 70 ms/cell tween
+  │       │         ├── BattleMap.clear_enemy_arrows()
+  │       │         └── unit.set_moved()
+  │       │
+  │       └── if not has_attacked and dist <= attack_range:
+  │            BattleMap.show_enemy_attack_arrow(from, to)   ← orange Line2D
+  │            await ATTACK_DISPLAY_DELAY (0.30 s)
+  │            BattleMap.perform_combat(unit, nearest)
+  │            BattleMap.clear_enemy_arrows()
+  │
+  ├── fallback: if unit still not has_moved → unit.set_moved()
+  │
+  └── TurnManager.end_enemy_turn()
+```
+
+**Timing constants** (top of `EnemyAI.gd`):
+
+| Constant              | Default | Purpose                                      |
+|-----------------------|---------|----------------------------------------------|
+| `ACTION_DELAY`        | 0.40 s  | Pause before enemy acts (player can see who) |
+| `ATTACK_DISPLAY_DELAY`| 0.30 s  | Attack arrow shown before combat resolves    |
+| movement step         | 0.07 s/cell | Hard-coded in `BattleMap.move_unit_animated` |
+
+## States Reference
+
+| State        | Meaning                                              | Input? |
+|--------------|------------------------------------------------------|--------|
+| `PLACEMENT`  | Pre-battle, drag units within placement zone         | Yes    |
+| `PLAYER_TURN`| Player unit's queue slot — awaiting drag             | Yes    |
+| `ENEMY_TURN` | Enemy slot just activated; signal emitted for HUD    | No     |
+| `ACTING`     | EnemyAI coroutine running; locks BattleMap input     | No     |
+
+`ACTING` is set immediately after `turn_changed(ENEMY_TURN)` is emitted and before
+`EnemyAI.execute_turn()` is called.  It is never emitted via `turn_changed`.
+
+## Signals
+
+| Signal                      | Emitted by          | Consumed by                                                 |
+|-----------------------------|---------------------|-------------------------------------------------------------|
+| `turn_changed(state)`       | `_activate_current` | HUD (label + button), BattleMap (`_on_turn_changed`)        |
+| `queue_updated(queue, pos)` | `_activate_current` | HUD (rebuild queue bar), BattleMap (dim/highlight units)    |
+| `new_round(count)`          | `_new_round()`      | HUD (label refresh)                                         |
+| `battle_won`                | `check_end_conditions` | HUD → shows modal, calls SaveData.unlock_after_battle    |
+| `battle_lost`               | `check_end_conditions` | HUD → shows modal                                        |
 
 ## Battle End & Overworld Progression
 
@@ -81,83 +187,6 @@ HUD._on_battle_won()
 HUD._on_battle_lost()
   └── result_panel.visible = true  ("Defeat!")
 
-HUD._on_continue_pressed()            ← Continue button on result panel
+HUD._on_continue_pressed()
   └── get_tree().change_scene_to_file("res://scenes/overworld/Overworld.tscn")
 ```
-
-When the player returns to the overworld, `Overworld._spawn_nodes()` reads
-`SaveData.is_node_unlocked(id)` for each node. The newly unlocked node now
-renders in gold and its button is enabled.
-
-`SaveData.current_battle_id` is set by `Overworld._on_node_clicked(id)` before
-the scene transition, so the next battle inherits the correct node index for
-tileset selection and enemy spawn positions.
-
-## EnemyAI Coroutine
-
-```
-EnemyAI.execute_turn()   [async coroutine — called fire-and-forget]
-  │
-  ├── get battle_map from TurnManager
-  ├── find first enemy where not has_moved
-  │    └── none found → TurnManager.end_enemy_turn(); return
-  │
-  ├── await 0.35 s          ← visible delay (ACTION_DELAY) so player can follow action
-  │
-  ├── _act(enemy, map)
-  │         │
-  │         ├── _find_nearest(enemy, player_units) → nearest player
-  │         │         └── linear scan, Manhattan distance
-  │         │
-  │         ├── if not has_moved:
-  │         │    _move_toward(enemy, nearest, map)
-  │         │         │
-  │         │         ├── temporarily unblock enemy cell + target cell
-  │         │         │    (AStarGrid2D refuses solid destinations)
-  │         │         ├── grid_mgr.get_astar_path(enemy.cell, target.cell)
-  │         │         ├── restore solid state
-  │         │         │
-  │         │         ├── walk path up to 1 step (current AI cap)
-  │         │         │    skip step if occupied
-  │         │         └── snap_to_cell(best_cell) + enemy.set_moved()
-  │         │
-  │         └── if not has_attacked:
-  │              dist = manhattan(enemy.cell, nearest.cell)
-  │              if dist <= enemy.data.attack_range:
-  │                map.perform_combat(enemy, nearest)
-  │
-  ├── anti-freeze guard: if enemy still has_moved == false after _act()
-  │    (e.g. blocked on all sides, path leads to occupied cell)
-  │    → enemy.set_moved()   ← forces spent so the round can advance
-  │
-  └── TurnManager.end_enemy_turn()
-```
-
-**Current AI limitation:** enemies move exactly 1 tile per turn regardless of
-`move_range` (`steps = mini(1, path.size() - 1)`). The pathfinding works
-correctly for longer paths; expanding AI to use full move range means
-iterating `min(move_range, path.size()-1)` steps and checking occupancy at each.
-
-## Predicates (TurnManager internals)
-
-| Function              | Returns true when…                                 |
-|-----------------------|----------------------------------------------------|
-| `_all_player_done()`  | Every living player unit has `has_moved == true`   |
-| `_all_enemy_done()`   | Every living enemy unit has `has_moved == true`    |
-| `_any_enemy_unmoved()`| At least one living enemy has `has_moved == false` |
-| `_is_battle_over()`   | Either army's unit list is empty                   |
-
-## Signals
-
-| Signal                | Emitted by               | Consumed by                                           |
-|-----------------------|--------------------------|-------------------------------------------------------|
-| `turn_changed(state)` | end_player/enemy_turn    | HUD (turn label + End Turn button enable/disable)     |
-| `new_round(count)`    | _new_round()             | HUD (turn label refresh)                              |
-| `battle_won`          | check_end_conditions()   | HUD → shows modal, calls SaveData.unlock_after_battle |
-| `battle_lost`         | check_end_conditions()   | HUD → shows modal                                     |
-
-## HUD Signals
-
-| Signal                   | Emitted by           | Consumed by                                     |
-|--------------------------|----------------------|-------------------------------------------------|
-| `threat_toggled(on:bool)`| HUD ThreatToggleButton | BattleMap._on_threat_toggled → _refresh_enemy_threat or clear |

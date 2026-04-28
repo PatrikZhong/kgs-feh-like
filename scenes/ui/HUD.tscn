@@ -5,18 +5,32 @@
 [node name="HUD" type="CanvasLayer"]
 script = ExtResource("1")
 
-; VBoxRoot fills the entire viewport. Spacer expands to push BottomBar to the bottom.
-; BottomBar is a Container child (layout_mode=2) so the editor never writes anchors_preset for it.
+; VBoxRoot fills the entire viewport. QueueBanner sits at the top, Spacer
+; expands to push BottomBar to the bottom.
 [node name="VBoxRoot" type="VBoxContainer" parent="."]
 anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 2
 
+; ---- Queue banner (top of screen) ----------------------------------------
+[node name="QueueBanner" type="PanelContainer" parent="VBoxRoot"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 80)
+mouse_filter = 2
+
+[node name="QueueContainer" type="HBoxContainer" parent="VBoxRoot/QueueBanner"]
+layout_mode = 2
+unique_name_in_owner = true
+alignment = 1
+mouse_filter = 2
+
+; ---- Spacer (pushes BottomBar to the bottom) ------------------------------
 [node name="Spacer" type="Control" parent="VBoxRoot"]
 layout_mode = 2
 size_flags_vertical = 3
 mouse_filter = 2
 
+; ---- Bottom HUD bar -------------------------------------------------------
 [node name="BottomBar" type="PanelContainer" parent="VBoxRoot"]
 layout_mode = 2
 custom_minimum_size = Vector2(0, 64)

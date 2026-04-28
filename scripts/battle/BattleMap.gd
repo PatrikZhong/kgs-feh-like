@@ -26,6 +26,8 @@ var _original_cell: Vector2i = Vector2i.ZERO
 var _reachable_cells: Array[Vector2i] = []
 var _extended_attack_cells: Array[Vector2i] = []  # orange: attackable from any move cell
 var _last_hovered_move_cell: Vector2i = Vector2i.ZERO  # last blue tile the cursor touched
+## True while dragging during the PLACEMENT phase — skips arrows and pathfinding.
+var _is_placement_drag: bool = false
 
 # Drag overlay: ghost afterimage + directional arrows
 var _ghost: Node2D = null
@@ -40,6 +42,12 @@ var _arrow_path: Array[Vector2i] = []
 # Non-null when cursor hovers an orange enemy cell
 var _hovered_attack_target: Unit = null
 
+# Enemy-turn overlay arrows (movement + attack)
+var _enemy_move_arrow: Line2D = null
+var _enemy_move_arrowhead: Polygon2D = null
+var _enemy_attack_arrow: Line2D = null
+var _enemy_attack_arrowhead: Polygon2D = null
+
 @onready var grid_mgr: GridManager = $GridManager
 @onready var highlight_lyr: HighlightLayer = $HighlightLayer
 @onready var units_layer: Node2D = $UnitsLayer
@@ -50,6 +58,7 @@ func _ready() -> void:
 	TurnManager.start_battle(self)
 	_fit_camera()
 	TurnManager.turn_changed.connect(_on_turn_changed)
+	TurnManager.queue_updated.connect(_on_queue_updated)
 	$HUD.threat_toggled.connect(_on_threat_toggled)
 	_begin_placement()
 	_refresh_enemy_threat()
@@ -71,8 +80,8 @@ func _fit_camera() -> void:
 # ---------------------------------------------------------------------------
 
 ## Spawns all units for the placement phase.
-## Player units occupy cells within the placement zone; enemies are placed randomly
-## on the remaining valid cells.
+## Player units occupy cells within the placement zone; enemies are placed at
+## cells defined by their UnitSpawner nodes.
 func _begin_placement() -> void:
 	var valid_cells: Array[Vector2i] = grid_mgr.get_valid_cells()
 	var placement_zone: Array[Vector2i] = grid_mgr.get_placement_zone_cells()
@@ -81,18 +90,24 @@ func _begin_placement() -> void:
 
 	var taken: Dictionary = {}
 
-	# Determine player roster: use spawners if present, else the default three.
-	var spawners: Array = spawners_layer.get_children().filter(
+	var all_spawners: Array = spawners_layer.get_children().filter(
 		func(c: Node) -> bool: return c is UnitSpawner and c.unit_data != null)
+	var player_spawners: Array = all_spawners.filter(
+		func(s: Node) -> bool: return (s as UnitSpawner).is_player_unit)
+	var enemy_spawners: Array = all_spawners.filter(
+		func(s: Node) -> bool: return not (s as UnitSpawner).is_player_unit)
 
+	# Player roster — UnitSpawner nodes define which unit types are present.
+	# Positions come from the placement zone, not the spawner cell.
+	# TODO: replace with SaveData.player_roster once the unit selection screen exists;
+	#       at that point UnitSpawner nodes for players become unnecessary.
 	var player_roster: Array = []
-	if spawners.size() > 0:
-		for s in spawners:
+	if player_spawners.size() > 0:
+		for s in player_spawners:
 			player_roster.append((s as UnitSpawner).unit_data)
 	else:
 		player_roster = [KNIGHT_DATA, ARCHER_DATA, MAGE_DATA]
 
-	# Place player units within the placement zone.
 	var pi: int = 0
 	for cell in placement_zone:
 		if pi >= player_roster.size():
@@ -101,26 +116,34 @@ func _begin_placement() -> void:
 		taken[cell] = true
 		pi += 1
 
-	# Place enemies — use EnemySpawnLayer cells if painted, else random valid cells.
-	var enemy_roster: Array = [ARMORED_ORC_DATA, ARMORED_ORC_DATA, ARMORED_ORC_DATA]
-	var spawn_layer := get_node_or_null("EnemySpawnLayer") as TileMapLayer
-	var enemy_cells: Array[Vector2i] = []
-
-	if spawn_layer and spawn_layer.get_used_cells().size() > 0:
-		for world_cell in spawn_layer.get_used_cells():
-			enemy_cells.append(grid_mgr.tilemap_to_grid(world_cell))
+	# Enemy roster — UnitSpawner nodes (is_player_unit=false) define both the
+	# unit type and the spawn cell, making each battle scene self-contained.
+	# Falls back to 3× ArmoredOrc on EnemySpawnLayer cells for scenes that
+	# pre-date this system (backwards-compatibility).
+	if enemy_spawners.size() > 0:
+		for s in enemy_spawners:
+			var spawner := s as UnitSpawner
+			_spawn(spawner.unit_data, spawner.cell, false)
 	else:
-		var pool: Array[Vector2i] = []
-		for cell in valid_cells:
-			if not taken.has(cell):
-				pool.append(cell)
-		pool.shuffle()
-		enemy_cells = pool
+		var enemy_roster: Array = [ARMORED_ORC_DATA, ARMORED_ORC_DATA, ARMORED_ORC_DATA]
+		var spawn_layer := get_node_or_null("EnemySpawnLayer") as TileMapLayer
+		var enemy_cells: Array[Vector2i] = []
 
-	for i in range(enemy_roster.size()):
-		if i >= enemy_cells.size():
-			break
-		_spawn(enemy_roster[i], enemy_cells[i], false)
+		if spawn_layer and spawn_layer.get_used_cells().size() > 0:
+			for world_cell in spawn_layer.get_used_cells():
+				enemy_cells.append(grid_mgr.tilemap_to_grid(world_cell))
+		else:
+			var pool: Array[Vector2i] = []
+			for cell in valid_cells:
+				if not taken.has(cell):
+					pool.append(cell)
+			pool.shuffle()
+			enemy_cells = pool
+
+		for i in range(enemy_roster.size()):
+			if i >= enemy_cells.size():
+				break
+			_spawn(enemy_roster[i], enemy_cells[i], false)
 
 func _spawn(data: UnitData, cell: Vector2i, is_player: bool) -> Unit:
 	var unit: Unit = UNIT_SCENE.instantiate()
@@ -161,6 +184,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif _inspected_enemy:
 			_clear_inspection()
 	elif event is InputEventMouseMotion and _dragged_unit:
+		# Placement drag: ghost follows cursor freely — no pathfinding or arrows.
+		if _is_placement_drag:
+			if _ghost:
+				_ghost.position = units_layer.to_local(get_global_mouse_position())
+			return
+
 		var hovered := grid_mgr.world_to_grid(get_global_mouse_position())
 
 		# Track last valid blue (movement) tile and compute shortest path to it.
@@ -215,9 +244,10 @@ func _begin_drag(world_pos: Vector2) -> void:
 	_original_cell = unit.grid_cell
 	_last_hovered_move_cell = unit.grid_cell
 	_arrow_path = [unit.grid_cell]
+	_is_placement_drag = is_placement
 
 	if is_placement:
-		# Highlight valid tiles within placement zone that aren't blocked by another unit.
+		# Highlight valid placement zone tiles not occupied by another unit.
 		var all_occupied: Array[Vector2i] = []
 		for u in units:
 			if u != unit:
@@ -257,7 +287,11 @@ func _begin_drag(world_pos: Vector2) -> void:
 	units_layer.add_child(_ghost)
 	_ghost.position = grid_mgr.grid_to_world(_original_cell)
 
-	# Arrow from origin to the proposed landing tile.
+	# Placement drag: no arrows — just pick up and drop.
+	if is_placement:
+		return
+
+	# Battle drag: create movement arrow and attack arrow.
 	var origin := grid_mgr.grid_to_world(_original_cell)
 	_drag_arrow = Line2D.new()
 	_drag_arrow.width = 3.0
@@ -324,7 +358,18 @@ func _end_drag(world_pos: Vector2) -> void:
 
 	# — Drop on a movement tile: just move —
 	elif drop_cell in _reachable_cells and drop_cell != _original_cell and cell_free:
-		_commit_move(unit, drop_cell, _arrow_path)
+		# Guarantee the animation path ends at drop_cell. _arrow_path is a
+		# breadcrumb of hovered tiles and may not end there if the user
+		# dropped without hovering the destination tile directly.
+		var commit_path := _arrow_path
+		if commit_path.is_empty() or commit_path[-1] != drop_cell:
+			var ally_cells_p: Array = []
+			for u in player_units:
+				if u != unit:
+					ally_cells_p.append(u.grid_cell)
+			commit_path = grid_mgr.get_shortest_path(
+				_original_cell, drop_cell, unit.data.can_jump_allies, ally_cells_p)
+		_commit_move(unit, drop_cell, commit_path)
 		TurnManager.end_player_turn()
 
 	# — Drop on an attack tile with an enemy: move to best position and attack —
@@ -355,6 +400,7 @@ func _end_drag(world_pos: Vector2) -> void:
 	_last_hovered_move_cell = Vector2i.ZERO
 	_arrow_path = []
 	_hovered_attack_target = null
+	_is_placement_drag = false
 
 func _update_drag_arrow() -> void:
 	if not _drag_arrow or not _drag_arrowhead:
@@ -407,6 +453,103 @@ func move_unit_instant(unit: Unit, cell: Vector2i) -> void:
 	unit.snap_to_cell(cell, grid_mgr)
 	grid_mgr.set_cell_solid(cell, true)
 	_unit_by_cell[cell] = unit
+
+## Animates a unit step-by-step along path_slice (70 ms/cell, same as the
+## player commit animation). Updates _unit_by_cell and A* solidity immediately
+## so pathfinding is consistent during the tween. Awaitable by EnemyAI.
+func move_unit_animated(unit: Unit, path_slice: Array[Vector2i], steps: int) -> void:
+	if steps <= 0 or path_slice.size() < 2:
+		return
+	var dest: Vector2i = path_slice[mini(steps, path_slice.size() - 1)]
+	_unit_by_cell.erase(unit.grid_cell)
+	grid_mgr.set_cell_solid(unit.grid_cell, false)
+	unit.grid_cell = dest
+	grid_mgr.set_cell_solid(dest, true)
+	_unit_by_cell[dest] = unit
+	unit.play_anim("walk")
+	var tween := create_tween()
+	for i in range(1, steps + 1):
+		if i >= path_slice.size():
+			break
+		tween.tween_property(unit, "position", grid_mgr.grid_to_world(path_slice[i]), 0.07)
+	await tween.finished
+	unit.play_anim("idle")
+
+# ---------------------------------------------------------------------------
+# Enemy arrow overlay (shown during enemy actions, cleared when done)
+# ---------------------------------------------------------------------------
+
+## Shows a yellow movement arrow along path_slice for the active enemy.
+func show_enemy_arrow(path_slice: Array[Vector2i]) -> void:
+	clear_enemy_arrows()
+	if path_slice.size() < 2:
+		return
+	_enemy_move_arrow = Line2D.new()
+	_enemy_move_arrow.width = 3.0
+	_enemy_move_arrow.default_color = Color(1.0, 0.95, 0.3, 0.9)
+	_enemy_move_arrow.z_index = 1
+	var pts := PackedVector2Array()
+	for cell in path_slice:
+		pts.append(grid_mgr.grid_to_world(cell))
+	_enemy_move_arrow.points = pts
+	add_child(_enemy_move_arrow)
+
+	_enemy_move_arrowhead = Polygon2D.new()
+	_enemy_move_arrowhead.color = Color(1.0, 0.95, 0.3, 0.9)
+	_enemy_move_arrowhead.z_index = 1
+	var to      := grid_mgr.grid_to_world(path_slice[-1])
+	var from_pt := grid_mgr.grid_to_world(path_slice[-2])
+	var dir  := (to - from_pt).normalized()
+	var perp := Vector2(-dir.y, dir.x)
+	var hs   := 6.0
+	_enemy_move_arrowhead.polygon = PackedVector2Array([
+		to + dir * hs * 1.5,
+		to - dir * hs + perp * hs,
+		to - dir * hs - perp * hs,
+	])
+	add_child(_enemy_move_arrowhead)
+
+## Shows an orange attack arrow from the enemy's cell toward the target's cell.
+func show_enemy_attack_arrow(from_cell: Vector2i, to_cell: Vector2i) -> void:
+	if _enemy_attack_arrow:
+		_enemy_attack_arrow.queue_free()
+		_enemy_attack_arrow = null
+	if _enemy_attack_arrowhead:
+		_enemy_attack_arrowhead.queue_free()
+		_enemy_attack_arrowhead = null
+
+	_enemy_attack_arrow = Line2D.new()
+	_enemy_attack_arrow.width = 3.0
+	_enemy_attack_arrow.default_color = Color(1.0, 0.35, 0.1, 0.9)
+	_enemy_attack_arrow.z_index = 1
+	var a := grid_mgr.grid_to_world(from_cell)
+	var b := grid_mgr.grid_to_world(to_cell)
+	_enemy_attack_arrow.points = PackedVector2Array([a, b])
+	add_child(_enemy_attack_arrow)
+
+	_enemy_attack_arrowhead = Polygon2D.new()
+	_enemy_attack_arrowhead.color = Color(1.0, 0.35, 0.1, 0.9)
+	_enemy_attack_arrowhead.z_index = 1
+	var dir  := (b - a).normalized()
+	var perp := Vector2(-dir.y, dir.x)
+	var hs   := 6.0
+	_enemy_attack_arrowhead.polygon = PackedVector2Array([
+		b + dir * hs * 1.5,
+		b - dir * hs + perp * hs,
+		b - dir * hs - perp * hs,
+	])
+	add_child(_enemy_attack_arrowhead)
+
+## Clears all enemy arrow overlay nodes.
+func clear_enemy_arrows() -> void:
+	for node in [_enemy_move_arrow, _enemy_move_arrowhead,
+				 _enemy_attack_arrow, _enemy_attack_arrowhead]:
+		if node:
+			node.queue_free()
+	_enemy_move_arrow = null
+	_enemy_move_arrowhead = null
+	_enemy_attack_arrow = null
+	_enemy_attack_arrowhead = null
 
 func _commit_move(unit: Unit, cell: Vector2i, path: Array[Vector2i] = []) -> void:
 	_unit_by_cell.erase(unit.grid_cell)
@@ -571,6 +714,17 @@ func _on_turn_changed(state) -> void:
 	if state == TurnManager.State.PLAYER_TURN:
 		_clear_inspection()
 		_refresh_enemy_threat()
+
+## Dims every living unit except the current queue actor, so it is clear
+## whose turn it is without displaying numbers on the grid.
+func _on_queue_updated(queue: Array, active_index: int) -> void:
+	for unit in units:
+		if is_instance_valid(unit):
+			unit.set_inactive_dim()
+	if active_index < queue.size():
+		var actor = queue[active_index]
+		if actor is Unit and is_instance_valid(actor):
+			(actor as Unit).set_active_highlight()
 
 func _on_threat_toggled(on: bool) -> void:
 	_threat_visible = on

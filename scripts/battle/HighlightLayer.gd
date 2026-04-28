@@ -22,23 +22,11 @@ func show_move_and_attack(move_cells: Array[Vector2i], attack_cells: Array[Vecto
 	_attack_cells = attack_cells
 	queue_redraw()
 
-## Show only attack range (orange) — used after a unit has landed.
-func show_attack_only(attack_cells: Array[Vector2i]) -> void:
-	_move_cells   = []
-	_attack_cells = attack_cells
-	queue_redraw()
-
 func set_threat(cells: Array[Vector2i]) -> void:
 	_threat_cells = cells
 	queue_redraw()
 
 func clear() -> void:
-	_move_cells   = []
-	_attack_cells = []
-	queue_redraw()
-
-func clear_all() -> void:
-	_threat_cells = []
 	_move_cells   = []
 	_attack_cells = []
 	queue_redraw()
